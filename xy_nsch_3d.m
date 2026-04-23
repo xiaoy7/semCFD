@@ -37,7 +37,7 @@ if xy == 1
     frePrint = 10;          % Console print frequency
     variables_grid={'X','Y','Z'};
     velName={'u','v','w','p','phi','psi','rho','mu'}; %,'ftx','fty','ftz'
-    parpool(size(velName,2));
+    % parpool(size(velName,2));
     filename_grid = fullfile(pathname, ['grid','.plt']);
 
     LL1 = 100;
