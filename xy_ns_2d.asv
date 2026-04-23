@@ -1,0 +1,359 @@
+% xiao yao v2025.4.26
+% sovling the navier stokes equation based on spectral element method
+% with 2D tensor product and projection method
+
+clc
+clear
+addpath(genpath("D:\semMatlab")) % Ensure this path is correct
+
+currentLocation = pwd;
+cd ..
+fileLocation = pwd;
+currentTime = datetime('now', 'Format', 'yyyyMMdd_HHmm_ss');% 获取当前日期和时间
+pathname = [fileLocation, '\time' char(currentTime)];
+cd(currentLocation)
+copyfile("*.m", pathname)
+
+stage = 1;
+fprintf('=== %d Program Starts ===\n', stage);
+stage = stage + 1;
+
+%% set parameters
+RE = 10; % Reynolds number
+nu = 1/RE; % Kinematic viscosity
+dT = 1e-3; % Time step
+steps = 1000; % Max number of steps (increased for potential convergence)
+tol = 1e-4; % Convergence tolerance (tightened slightly)
+alpha_helmholtz = 1 / dT; % Coefficient for Helmholtz equation (implicit time term)
+varName = 'U,V,PRE\n'; % export data
+
+
+Parau.Np = 4; % polynomial degree
+Np = Parau.Np;
+
+
+Parau.basis = 'SEM'; %'FFT' 'SEM'
+if Parau.basis == 'FFT'
+    Parau.length = 1; % Assuming square domain if FFT
+    Parau.minx = -Parau.length;
+    Parau.maxx = Parau.length;
+    Parau.miny = -Parau.length;
+    Parau.maxy = Parau.length;
+    Parau.Ncellx = 1;
+    Parau.Ncelly = 1; % FFT implies single domain usually
+else
+    Parau.minx = 0;
+    Parau.maxx = 1;
+    Parau.miny = 0;
+    Parau.maxy = 2; % Square domain
+
+    Parau.Ncell = 10; % number of cells in finite element (default)
+    % number of cells in finite element
+    Parau.Ncellx = 10;
+    Parau.Ncelly = 20;
+
+end
+
+
+if gpuDeviceCount('available') < 1
+    Parau.device = 'cpu';
+else
+    Parau.device = 'gpu';
+    Parau.device_id = 1; % Choose appropriate GPU ID
+end
+
+
+% polynomial degree
+Npx = Np;
+Npy = Np;
+Parau.Npx = Npx;
+Parau.Npy = Npy;
+Parau.nx_all = Parau.Ncellx * Npx + 1;
+Parau.ny_all = Parau.Ncelly * Npy + 1;
+
+
+Parau.bc = 'dirichlet'; % Boundary condition type for velocity
+% Parameterv = Parameteru; % Redundant
+Parap = Parau; % Use same domain/discretization parameters initially
+Parap.bc = 'neumann'; % Boundary condition type for pressure correction
+
+% Calculate free/boundary nodes based on BC type
+Parau = parameter_bc2d(Parau);
+Parap = parameter_bc2d(Parap); % Pressure uses Neumann
+
+
+% the domain is [Lminx, Lmaxx] x [Lminy, Lmaxy]
+
+%% Qk finite element with (k+1)-point Gauss-Lobatto quadrature
+fprintf('Laplacian is Q%d spectral element method \n', Np)
+
+if (Np < 2)
+    fprintf('It is also classical second order discrete Laplacian \n')
+else
+    fprintf('It is also a %d-th order accurate finite difference scheme \n', Np + 2)
+end
+
+% Get matrices for Velocity (Dirichlet BCs applied internally by cal_matrix2 for INTERIOR solve)
+[dx, x, Tx, ~, lambda_xd, Dmatrixx, ex] = cal_matrix2('x', Parau); % Hx not needed directly
+[dy, y, Ty, ~, lambda_yd, Dmatrixy, ey] = cal_matrix2('y', Parau); % Hy not needed directly
+DmatrixyT = Dmatrixy'; % Transpose for convenience
+
+% Get matrices for Pressure (Neumann BCs - use cal_matrix2_1 or similar)
+% Ensure cal_matrix2_1 correctly handles Neumann for pressure
+[dxn, exn, Txn, lambda_xn] = cal_matrix2_1('x', Parap,x);
+[dyn, eyn, Tyn, lambda_yn] = cal_matrix2_1('y', Parap,y);
+
+[coordY, coordX] = meshgrid(y, x); % Grid coordinates for output/plotting
+
+%% initial parameters
+fprintf('=== %d initial parameter\n', stage);
+stage = stage + 1;
+
+invTx = pinv(Tx); % Inverse transforms for INTERIOR velocity nodes
+invTy = pinv(Ty);
+invTxn = pinv(Txn); % Inverse transforms for pressure nodes (Neumann)
+invTyp = pinv(Tyn);
+
+
+% Initialize velocity and pressure fields
+[un, vn, pre] = deal(zeros(Parau.nx_all, Parau.ny_all));
+
+% Set initial boundary conditions for velocity
+% Example: Lid-driven cavity u=1 at y=maxy (top boundary)
+% Assuming bcNodesy(2) corresponds to the top boundary (y=maxy)
+lid_velocity = 1;
+un(:, Parau.bcNodesy(2)) = lid_velocity; % Set top boundary u=1
+% Other boundaries (u=0, v=0) are implicitly handled by solving for interior
+
+un1 = un; % Initialize next step velocity
+vn1 = vn;
+
+OUTPUT_Tecplot2D4(0,pathname, Parau.ny_all, Parau.nx_all,  varName, ...
+    coordX(:), coordY(:),  un(:), vn(:), pre(:));
+
+
+
+% --- Correctly calculate boundary contribution for RHS adjustment ---
+% This term accounts for -(nu * Laplacian(u_boundary)) contribution to interior nodes
+% where u_boundary contains only the non-homogeneous boundary values.
+u_boundary = zeros(Parau.nx_all, Parau.ny_all);
+u_boundary(:, Parau.bcNodesy(2)) = lid_velocity; % Set only the non-zero BC part
+laplacian_u_boundary = (Dmatrixx * (Dmatrixx * u_boundary)) + (u_boundary * DmatrixyT) * DmatrixyT;
+
+% The contribution to subtract from the intermediate RHS FU (interior nodes)
+fubc_contribution = -nu * laplacian_u_boundary(Parau.freeNodesx, Parau.freeNodesy);
+% If vn had non-zero BCs, calculate fvbc_contribution similarly
+% fvbc_contribution = zeros(size(fubc_contribution)); % Assuming v=0 on boundaries
+
+
+% Move data to GPU if specified
+switch Parau.device
+    case 'gpu'
+        fprintf('GPU computation: starting to load matrices/data \n')
+        Device = gpuDevice(Parau.device_id);
+        % Velocity matrices (interior)
+        Tx = gpuArray(Tx);
+        Ty = gpuArray(Ty);
+        lambda_xd = gpuArray(lambda_xd);
+        lambda_yd = gpuArray(lambda_yd);
+        ex = gpuArray(ex);
+        ey = gpuArray(ey);
+        invTx = gpuArray(invTx);
+        invTy = gpuArray(invTy);
+        % Pressure matrices (Neumann)
+        Txn = gpuArray(Txn);
+        Tyn = gpuArray(Tyn);
+        lambda_xn = gpuArray(lambda_xn);
+        lambda_yn = gpuArray(lambda_yn);
+        exn = gpuArray(exn);
+        eyn = gpuArray(eyn);
+        invTxn = gpuArray(invTxn);
+        invTyp = gpuArray(invTyp);
+        % Differentiation matrices (assuming full)
+        Dmatrixx = gpuArray(Dmatrixx);
+        DmatrixyT = gpuArray(DmatrixyT); % Note: Dmatrixy is transposed before GPU transfer
+        % Fields
+        un = gpuArray(un);
+        vn = gpuArray(vn);
+        un1 = gpuArray(un1);
+        vn1 = gpuArray(vn1);
+        pre = gpuArray(pre);
+        % Boundary contribution
+        fubc_contribution = gpuArray(fubc_contribution);
+        % fvbc_contribution = gpuArray(fvbc_contribution); % Add if needed
+end
+
+% generate eigenvalue tensor for Helmholtz solve
+poisson_d = squeeze(tensorprod(lambda_xd, ey)) + squeeze(tensorprod(ex, lambda_yd));
+helmholtz_u = alpha_helmholtz + nu * poisson_d; % Include alpha and viscosity
+
+% generate eigenvalue tensor for Neumann nodes
+poisson_n = squeeze(tensorprod(lambda_xn, eyn)) + squeeze(tensorprod(exn, lambda_yn));
+% Avoid division by zero for the zero eigenvalue
+poisson_n(poisson_n < 1e-12) = 1e-12; % Regularization
+poisson_p = poisson_n;
+
+
+switch Parau.device
+    case 'gpu'
+        wait(Device);
+        fprintf('GPU computation: loading finished and GPU computing started \n')
+end
+
+%% online computation
+tic;
+
+
+fprintf('=== %d start time stepping\n', stage);
+stage = stage + 1;
+for Iter = 1:steps
+
+    %% Step 1: Calculate intermediate velocity RHS (convection + previous diffusion/pressure)
+    % Calculate convective terms (e.g., using Adams-Bashforth 1st order)
+    DUnx = Dmatrixx * un;
+    DUny = un * DmatrixyT;
+    DVnx = Dmatrixx * vn;
+    DVny = vn * DmatrixyT;
+
+    convection_u = un .* DUnx + vn .* DUny;
+    convection_v = un .* DVnx + vn .* DVny;
+
+    % Intermediate velocity RHS (explicit convection, implicit time term)
+    U_star = un / dT - convection_u;
+    V_star = vn / dT - convection_v;
+    % Note: Diffusion term is handled implicitly in the Helmholtz solve (Step 3)
+
+    %% Step 2: Pressure correction (Poisson equation)
+    % Calculate divergence of intermediate velocity RHS (using full matrices)
+    Div_U_star = Dmatrixx * U_star;
+    Div_V_star = V_star * DmatrixyT;
+
+    % RHS for pressure Poisson equation (Neumann BCs assumed for pressure)
+    % We need the divergence evaluated at the pressure nodes (which might be different if staggered)
+    % Assuming pressure nodes are the same as velocity nodes for now
+    FP = -(Div_U_star + Div_V_star);
+
+    % Solve Poisson equation for pressure correction 'pre' using Neumann matrices/nodes
+    pre_spec = pagemtimes(FP, invTyp'); % Use pressure nodes/matrices
+    pre_spec = squeeze(tensorprod(invTxn, pre_spec, 2, 1));
+    pre_spec = pre_spec ./ poisson_p; % Solve in spectral space
+    pre = pagemtimes(pre_spec, Tyn');
+    pre = squeeze(tensorprod(Txn, pre, 2, 1));
+
+
+    if strcmp(Parau.device, 'gpu')
+        wait(Device);
+    end
+
+    %% Step 3: Velocity correction (Helmholtz equation)
+    % Calculate pressure gradient (full domain, using full matrices)
+    GradPre_x = Dmatrixx * pre;
+    GradPre_y = pre * DmatrixyT;
+
+    % RHS for Helmholtz equation (full domain initially)
+    FU = U_star - GradPre_x;
+    FV = V_star - GradPre_y;
+
+    % Adjust RHS for INTERIOR nodes using pre-calculated boundary contributions
+    FU_interior = FU(Parau.freeNodesx, Parau.freeNodesy) - fubc_contribution;
+    FV_interior = FV(Parau.freeNodesx, Parau.freeNodesy);% - fvbc_contribution; % fvbc is zero here
+
+    % Solve Helmholtz equation for u^(n+1) (INTERIOR nodes)
+    uv_spec = pagemtimes(FU_interior, invTy'); % Use INTERIOR velocity matrices
+    uv_spec = squeeze(tensorprod(invTx, uv_spec, 2, 1));
+    uv_spec = uv_spec ./ helmholtz_u; % Solve in spectral space
+    uv_phys = pagemtimes(uv_spec, Ty');
+    uv_phys = squeeze(tensorprod(Tx, uv_phys, 2, 1));
+    un1(Parau.freeNodesx, Parau.freeNodesy) = uv_phys; % Update INTERIOR u
+
+    if strcmp(Parau.device, 'gpu')
+        wait(Device);
+    end
+
+    % Solve Helmholtz equation for v^(n+1) (INTERIOR nodes)
+    uv_spec = pagemtimes(FV_interior, invTy'); % Use INTERIOR velocity matrices
+    uv_spec = squeeze(tensorprod(invTx, uv_spec, 2, 1));
+    uv_spec = uv_spec ./ helmholtz_u; % Solve in spectral space
+    uv_phys = pagemtimes(uv_spec, Ty');
+    uv_phys = squeeze(tensorprod(Tx, uv_phys, 2, 1));
+    vn1(Parau.freeNodesx, Parau.freeNodesy) = uv_phys; % Update INTERIOR v
+
+    if strcmp(Parau.device, 'gpu')
+        wait(Device);
+    end
+
+    % Boundary values of un1, vn1 remain fixed as they were not part of the solve
+    % Re-assert boundary condition for un1 explicitly for clarity (optional but good practice)
+    % un1(:, Parameteru.bcNodesy(2)) = lid_velocity;
+    % vn1(:, Parameteru.bcNodesy(2)) = 0; % Ensure v=0 on lid
+    % un1(:, Parameteru.bcNodesy(1)) = 0; % Bottom wall u=0
+    % vn1(:, Parameteru.bcNodesy(1)) = 0; % Bottom wall v=0
+    % un1(Parameteru.bcNodesx(1), :) = 0; % Left wall u=0
+    % vn1(Parameteru.bcNodesx(1), :) = 0; % Left wall v=0
+    % un1(Parameteru.bcNodesx(2), :) = 0; % Right wall u=0
+    % vn1(Parameteru.bcNodesx(2), :) = 0; % Right wall v=0
+
+
+    %% Error analysis and convergence check (based on INTERIOR nodes)
+    error_u = norm(un1 - un, 'fro');
+    error_v = norm(vn1 - vn, 'fro');
+    % Normalize by number of interior points and dT? Or just check absolute change.
+    num_interior_nodes = numel(Parau.freeNodesx) * numel(Parau.freeNodesy);
+    total_rms_error = sqrt(error_u^2 + error_v^2) / sqrt(num_interior_nodes);
+
+
+    if rem(Iter, 10) == 0 % Print less frequently
+        fprintf('Iter = %d, RMS Vel Change = %e\n', Iter, total_rms_error);
+    end
+
+    % Output data periodically (e.g., every 100 steps)
+    if rem(Iter, 100) == 0
+        if strcmp(Parau.device,'gpu')
+            un_out=gather(un1);
+            vn_out=gather(vn1);
+            pre_out=gather(pre);
+        else
+            un_out=un1;
+            vn_out=vn1;
+            pre_out=pre;
+        end
+        OUTPUT_Tecplot2D4(Iter,pathname, Parau.nx_all, Parau.ny_all,  varName, ...
+            coordX(:), coordY(:), un_out(:), vn_out(:), pre_out(:));
+    end
+
+
+    if total_rms_error <= tol
+        fprintf('Convergence reached at iteration %d\n', Iter);
+        fprintf('Final RMS Vel Change = %e\n', total_rms_error);
+        % export final data to tecplot
+        if strcmp(Parau.device,'gpu')
+            un_out=gather(un1);
+            vn_out=gather(vn1);
+            pre_out=gather(pre);
+        else
+            un_out=un1;
+            vn_out=vn1;
+            pre_out=pre;
+        end
+       OUTPUT_Tecplot2D4(Iter,pathname, Parau.nx_all, Parau.ny_all, varName, ...
+            coordX(:),  coordY(:), un_out(:), vn_out(:), pre_out(:));
+        break;
+    end
+
+    % Update velocity for next iteration
+    un = un1;
+    vn = vn1;
+
+end
+
+
+time = toc;
+fprintf('Total computation time: %f seconds\n', time);
+
+fprintf('=== %d Program Ends ===\n', stage);
+
+% --- Helper function assumed to exist ---
+% function Parameter = parameter_bc(Parameter)
+% function [d, x, T, H, lambda, Dmatrix, e] = cal_matrix2(direction, Parameter) % Assumes Dmatrix is FULL
+% function [d, e, T, lambda, Dmatrix, ex] = cal_matrix2_1(direction, Parameter, x) % Assumes Dmatrix is FULL
+% function OUTPUT_Tecplot2D3(Iter, nx, ny, varName, X, Y, U, V, P)
