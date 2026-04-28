@@ -99,6 +99,23 @@ DmatrixyT = Dmatrixy'; % Transpose for convenience
 [coordY, coordX] = meshgrid(y, x); % Grid coordinates for output/plotting
 gravity_potential = - coordY; % Hydrostatic pressure profile balancing gravity
 
+% immersed boundary method (IBM) setup
+ibm = ibm_setup2d(coordX, coordY, dT, para_u);
+if ibm.enabled
+    rigid_node_ids = find(ibm.mask >= 0.5);
+    rigid_nodes = [coordX(rigid_node_ids), coordY(rigid_node_ids)];
+    rigid_nodes_file = fullfile(pathname, 'immersed_body_nodes.dat');
+    fid_rigid = fopen(rigid_nodes_file, 'w');
+    if fid_rigid ~= -1
+        fprintf(fid_rigid, 'VARIABLES = "X","Y"\n');
+        fprintf(fid_rigid, 'ZONE T="immersed_body_nodes", I=%d, F=POINT\n', size(rigid_nodes, 1));
+        fprintf(fid_rigid, '%20.12e %20.12e\n', rigid_nodes');
+        fclose(fid_rigid);
+    else
+        warning('Could not open immersed body node export file: %s', rigid_nodes_file);
+    end
+end
+
 %% initial parameters
 fprintf('=== %d initial parameter\n', stage);
 stage = stage + 1;
@@ -166,6 +183,9 @@ if strcmp(para_u.device, 'gpu')
     un1 = gpuArray(un1);
     vn1 = gpuArray(vn1);
     u_boundary = gpuArray(u_boundary);
+    ibm.mask = gpuArray(ibm.mask);
+    ibm.target_u = gpuArray(ibm.target_u);
+    ibm.target_v = gpuArray(ibm.target_v);
     wait(Device);
 end
 
@@ -224,6 +244,14 @@ for Iter = Iter1:steps
     U_star = un / dT - convection_u;
     V_star = vn / dT - convection_v;  % Removed gravity term (-1) for lid-driven cavity
     % Note: Diffusion term is handled implicitly in the Helmholtz solve (Step 3)
+
+    % Step 1.5: IBM forcing (direct forcing / Brinkman-style penalization)
+    if ibm.enabled
+        ibm = ibm_update_rigid_body2d(ibm, Iter, dT);
+        [ibm_force_u, ibm_force_v] = ibm_direct_forcing2d(un, vn, ibm, dT);
+        U_star = U_star + ibm_force_u;
+        V_star = V_star + ibm_force_v;
+    end
 
     %% Step 2: Pressure correction (Poisson equation)
     % Calculate divergence of intermediate velocity RHS (using full matrices)
@@ -292,6 +320,12 @@ for Iter = Iter1:steps
     vn1(:, para_u.bcNodesy) = 0;
     vn1(para_u.bcNodesx, :) = 0;
 
+    if ibm.enabled
+        % Sharp re-enforcement of no-slip at immersed solid nodes
+        un1 = (1 - ibm.mask) .* un1 + ibm.mask .* ibm.target_u;
+        vn1 = (1 - ibm.mask) .* vn1 + ibm.mask .* ibm.target_v;
+    end
+
     %% Error analysis and convergence check (based on INTERIOR nodes)
     error_u = norm(un1 - un, 'fro');
     error_v = norm(vn1 - vn, 'fro');
@@ -334,4 +368,3 @@ time = toc;
 fprintf('Total computation time: %f seconds\n', time);
 
 fprintf('=== %d Program Ends ===\n', stage);
-
