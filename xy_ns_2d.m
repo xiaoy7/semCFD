@@ -25,7 +25,7 @@ stage = stage + 1;
 RE = 2000; % Reynolds number
 nu = 1/RE; % Kinematic viscosity
 dT = 1e-3; % Time step
-steps = 500000; % Max number of steps (increased for potential convergence)
+steps = 5000; % Max number of steps (increased for potential convergence)
 tol = 1e-7; % Convergence tolerance (tightened slightly)
 alpha_helmholtz = 1 / dT; % Coefficient for Helmholtz equation (implicit time term)
 varName = 'U,V,PRE\n'; % export data
@@ -323,8 +323,8 @@ for Iter = Iter1:steps
     end
 
     % Output data periodically (e.g., every 100 steps)
-    % if rem(Iter, 1) == 0
-    if total_rms_error <= tol
+    if rem(Iter, 100) == 0
+    % if total_rms_error <= tol
         if strcmp(para_u.device,'gpu')
             un_out=gather(un1);
             vn_out=gather(vn1);
@@ -338,8 +338,8 @@ for Iter = Iter1:steps
         OUTPUT_Tecplot2D5(Iter,pathname, para_u.nx_all, para_u.ny_all,  varName, ...
             coordX(:), coordY(:), un_out(:), vn_out(:), pre_out(:));
 
-        Iter
-        break
+        % Iter
+        % break
     end
 
  
