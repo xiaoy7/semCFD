@@ -380,7 +380,9 @@ for Iter = Iter1:steps
         p_nodes = interp2(coordX, coordY, pre_cpu, x_nodes, y_nodes, 'linear', 0);
         time_val = Iter * dT;
         for i = 1:N_nodes
-            fprintf(fid, '%.6f %.6f %.6f %.6f %.6f %.6f\n', x_nodes(i), y_nodes(i), ibm.body_velocity(1), ibm.body_velocity(2), p_nodes(i), time_val);
+            fprintf(fid, '%.6f %.6f %.6f %.6f %.6f %.6f\n', x_nodes(i), ...
+                y_nodes(i), ibm.body_velocity(1), ibm.body_velocity(2), ...
+                p_nodes(i), time_val);
         end
         fclose(fid);
 
