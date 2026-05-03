@@ -8,8 +8,9 @@
 % gravity = -1;
 % bubble tension = 0.01 0.1
 % delta = 0.01 1
-% rt
-
+% 13145.98 s
+% M0 = 1e-5 1e-3; 1e-4; 1e-6; 
+% 20764.49 s
 
 xy = 1;%0:继续计算, 1:重新开始
 xyxy = 1; %0:继续计算, 1:重新开始
@@ -31,33 +32,33 @@ if xy == 1
     stage = stage + 1;
 
     %% Problem parameters
-    delta = 5e-3;           % Time step
-    steps = 1000;          % Maximum number of iterations
-    freOut = 200;           % Tecplot output frequency
+    delta = 0.01;           % Time step
+    steps = 40000;          % Maximum number of iterations
+    freOut = 1000;           % Tecplot output frequency
     frePrint = 10;          % Console print frequency
     variables_grid={'X','Y','Z'};
-    velName={'u','v','w','p','phi','psi','rho','mu'}; %,'ftx','fty','ftz'
+    velName={'u','v','w','phi'}; %'p','ftx','fty','ftz','psi','rho','mu'
+
     % parpool(size(velName,2));
+
     filename_grid = fullfile(pathname, ['grid','.plt']);
 
     LL1 = 100;
     Cn = 0.01;
     eta = Cn * LL1;
     radius = LL1/2;
-    Cx = LL1/4;
-    Cy = LL1/4;
-    Cz = LL1/4;
+    Cx = LL1/2;
+    Cy = LL1/2;
     hz = radius*2;
     uw = 0;
-    
+    Cz = radius*2;
 
     Lrho = 3;  % density
     Grho = 1;
-    Lmu = 0.09766;
-    Gmu = 0.09766; %  dynamic viscosity
-    nium = 0.09766; %mu/rho
+    Lmu = 0.09766*3;
+    Gmu = 0.09766*3;  % dynamic viscosity
+    nium = 0.09766*3; % mu/rho
     rho0 = min(Lrho,Grho);
-
 
     rhoplus = (Lrho + Grho)/ 2;
     rhomius = (Lrho - Grho)/ 2;
@@ -66,7 +67,7 @@ if xy == 1
 
     gravity = -0.01;
     tension = 1.96;
-    M0 = 1e-7; % 5e-7 1e-6;
+    M0 = 1e-7; % 5e-7 1e-7;
     gamma0 = 1.5;
     bigs = 1.1 * eta ^ 2 * sqrt(4 * gamma0 / (M0 * delta));
     aa = 1 - gamma0 / (M0 * delta) * 4 * eta ^ 4 / bigs ^ 2;
@@ -78,9 +79,9 @@ if xy == 1
     Np = para_d.Np;
 
     para_d.basis = 'SEM';
-    para_d.minx = -0.5*LL1; 
+    para_d.minx = -0.5*LL1;
     para_d.maxx = 0.5*LL1;
-    para_d.miny = -0.5*LL1; 
+    para_d.miny = -0.5*LL1;
     para_d.maxy = 0.5*LL1;
     para_d.minz = -2 * LL1;
     para_d.maxz = 2 * LL1;
@@ -116,7 +117,7 @@ if xy == 1
     [~, x, Txd, ~, lambda_xd, Dmatrixx, ~] = cal_matrix2('x', para_d);
     [~, y, Tyd, ~, lambda_yd, Dmatrixy, ~] = cal_matrix2('y', para_d);
     [~, z, Tzd, ~, lambda_zd, Dmatrixz, ~] = cal_matrix2('z', para_d);
-    
+
     Dmatrixx = full(Dmatrixx);
     Dmatrixy = full(Dmatrixy);
     Dmatrixz = full(Dmatrixz);
@@ -151,25 +152,32 @@ if xy == 1
     Un_1 = Un; Vn_1 = Vn;
 
     [phin,Wn] = intialPhi(coordX,coordY,coordZ,Cx,Cy,Cz,radius,eta,hz,uw,LL1);
-      saveTecPhi(0,pathname,IJK,'phi',phin(:)) 
-    Wn1 = Wn;
+       Wn1 = Wn;
     Wn_1 = Wn;
-    title='';%无标题    
-    zone_title='';%无标题 
+
+     %% write
+    fprintf('=== %d write ===\n', stage);
+    stage = stage + 1;
+
+ 
+    title='';%无标题
+    zone_title='';%无标题
     time=0;%非定常时间
     IJK=[para_d.nx_all, para_d.ny_all, para_d.nz_all];
     %创建文件头
     plt_Head(filename_grid,title,variables_grid,'GRID')
-    %创建zone（point）格式
+    %创建zone point 格式
     plt_Zone(filename_grid,zone_title,IJK,time,coords)
     % OUTPUT_Tecplot3d2(0, pathname, coords, para_d.nx_all, para_d.ny_all, para_d.nz_all, varName, ...
     %     phin(:), zeross(:), zeross(:), zeross(:));
-
+    saveTecPhi(0,pathname,IJK,'phi',phin(:))
     phin1 = phin;
     phin_1 = phin;
 
 
     %% Eigenvalue tensors
+    fprintf('=== %d Eigenvalue ===\n', stage);
+    stage = stage + 1;
     lambda_xd = lambda_xd(:);
     lambda_yd = lambda_yd(:);
     lambda_zd = lambda_zd(:);
@@ -177,33 +185,30 @@ if xy == 1
     lambda_yn = lambda_yn(:);
     lambda_zn = lambda_zn(:);
 
-    poisson_d = reshape(lambda_xd, [], 1, 1) + reshape(lambda_yd, 1, [], 1) ...
+    poisson = reshape(lambda_xn, [], 1, 1) + reshape(lambda_yn, 1, [], 1) ...
         + reshape(lambda_zd, 1, 1, []);
-    helmholtz_uv = gamma0 / delta + nium * poisson_d;
-    clear lambda_xd lambda_yd lambda_zd
+    helmholtz_w = gamma0 / delta + nium * poisson;
+    
     % poisson_nd = reshape(lambda_xn, [], 1, 1) + reshape(lambda_yn, 1, [], 1) ...
     % + reshape(lambda_zd, 1, 1, []);
 
-
-    poisson_n = reshape(lambda_xn, [], 1, 1) + reshape(lambda_yn, 1, [], 1) ...
+    poisson = reshape(lambda_xd, [], 1, 1) + reshape(lambda_yn, 1, [], 1) ...
         + reshape(lambda_zn, 1, 1, []);
+    helmholtz_u = gamma0 / delta + nium * poisson;
+    poisson = reshape(lambda_xn, [], 1, 1) + reshape(lambda_yd, 1, [], 1) ...
+        + reshape(lambda_zn, 1, 1, []);
+    helmholtz_v = gamma0 / delta + nium * poisson;
 
-    clear lambda_xn lambda_yn lambda_zn
-    helmholtz_w = gamma0 / delta + nium * poisson_n;
-
-
-    poisson_p = poisson_n;
-
-    helmholtzPhi = alphaCH - poisson_n;
-
-    helmholtzPsi = (alphaCH + bigs / eta ^ 2) + poisson_n;
-
+    poisson = reshape(lambda_xn, [], 1, 1) + reshape(lambda_yn, 1, [], 1) ...
+        + reshape(lambda_zn, 1, 1, []);
+    helmholtzPhi = alphaCH - poisson;
+    helmholtzPsi = (alphaCH + bigs / eta ^ 2) + poisson;
 
     weight_yz = reshape(wy', 1, [], 1) .* reshape(wz', 1, 1, []);
     weight_xz = reshape(wx, [], 1, 1) .* reshape(wz', 1, 1, []);
     weight_xy = reshape(wx, [], 1, 1) .* reshape(wy', 1, [], 1);
 
-    clear wx wy wz
+    clear lambda_xd lambda_yd lambda_zd lambda_xn lambda_yn lambda_zn wx wy wz
     %% Device transfer
     switch para_d.device
         case 'gpu'
@@ -214,18 +219,18 @@ if xy == 1
             invTxd = gpuArray(invTxd); invTyd = gpuArray(invTyd); invTzd = gpuArray(invTzd);
             invTxn = gpuArray(invTxn); invTyn = gpuArray(invTyn); invTzn = gpuArray(invTzn);
             Dmatrixx = gpuArray(Dmatrixx); DmatrixyT = gpuArray(DmatrixyT); Dmatrixz = gpuArray(Dmatrixz);
+            helmholtz_u = gpuArray(helmholtz_u);
+            helmholtz_v = gpuArray(helmholtz_v);
             helmholtz_w = gpuArray(helmholtz_w);
-
-            helmholtz_uv = gpuArray(helmholtz_uv);
             helmholtzPhi = gpuArray(helmholtzPhi); helmholtzPsi = gpuArray(helmholtzPsi);
-            poisson_p = gpuArray(poisson_p);
+            poisson = gpuArray(poisson);
             Un = gpuArray(Un); Vn = gpuArray(Vn); Wn = gpuArray(Wn);
             Un1 = gpuArray(Un1); Vn1 = gpuArray(Vn1); Wn1 = gpuArray(Wn1);
             Un_1 = gpuArray(Un_1); Vn_1 = gpuArray(Vn_1); Wn_1 = gpuArray(Wn_1);
             Pn = gpuArray(Pn); Pn1 = gpuArray(Pn1); Pn_1 = gpuArray(Pn_1);
             phin = gpuArray(phin); phin1 = gpuArray(phin1); phin_1 = gpuArray(phin_1);
             mass_diag = gpuArray(mass_diag);
-           
+
     end
 
     if strcmp(para_d.device, 'gpu')
@@ -243,7 +248,6 @@ else
 
     steps = 2 * steps;
     Iter1 = Iter + 1;
-
 
     stage = 1;
     fprintf('=== %d Inital old old old === \n',stage);
@@ -319,7 +323,8 @@ for Iter = Iter1:steps
     % ftz = lambda * psi1 .* Dphiz;
 
     rho = rhoplus + phin1 * rhomius;
-    mu = muplus + phin1 * muplus;
+    mu = muplus + phin1 * mumius;
+    
     Dmux = mumius * Dphix;
     Dmuy = mumius * Dphiy;
     Dmuz = mumius * Dphiz;
@@ -374,7 +379,7 @@ for Iter = Iter1:steps
     Fx(:)=0;
     Fy(:)=0;
     Fz(:)=0;
-    
+
     Fx(1, :, :) = -midx(1, :, :) .* weight_yz;
     Fx(end, :, :) = midx(end, :, :) .* weight_yz;
     Fy(:, 1, :) = -midy(:, 1, :) .* weight_xz;
@@ -388,7 +393,7 @@ for Iter = Iter1:steps
     pre_spec = tensorprod(f_solver, invTzn', 3, 1);
     pre_spec = pagemtimes(pre_spec, invTyn');
     pre_spec = squeeze(tensorprod(invTxn, pre_spec, 2, 1));
-    pre_spec = pre_spec ./ poisson_p;
+    pre_spec = pre_spec ./ poisson;
     Pn1 = tensorprod(pre_spec, Tzn', 3, 1);
     Pn1 = pagemtimes(Pn1, Tyn');
     Pn1 = squeeze(tensorprod(Txn, Pn1, 2, 1));
@@ -405,39 +410,40 @@ for Iter = Iter1:steps
     FV = uv31y - GradPre_y ./ rho0;
     FW = uv31z - GradPre_z ./ rho0;
 
-    FU_interior = FU(para_d.freeNodesx, para_d.freeNodesy, para_d.freeNodesz);
-    FV_interior = FV(para_d.freeNodesx, para_d.freeNodesy, para_d.freeNodesz);
-    % FW_interior = FW;
+    FU_interior = FU(para_d.freeNodesx, :, :);
+    FV_interior = FV(:, para_d.freeNodesy, :);
+    FW_interior = FW(:, :, para_d.freeNodesz);
 
-    u_spec = tensorprod(FU_interior, invTzd', 3, 1);
-    u_spec = pagemtimes(u_spec, invTyd');
+    u_spec = tensorprod(FU_interior, invTzn', 3, 1);
+    u_spec = pagemtimes(u_spec, invTyn');
     u_spec = squeeze(tensorprod(invTxd, u_spec, 2, 1));
-    u_spec = u_spec ./ helmholtz_uv;
-    u_phys = tensorprod(u_spec, Tzd', 3, 1);
-    u_phys = pagemtimes(u_phys, Tyd');
+    u_spec = u_spec ./ helmholtz_u;
+    u_phys = tensorprod(u_spec, Tzn', 3, 1);
+    u_phys = pagemtimes(u_phys, Tyn');
     u_phys = squeeze(tensorprod(Txd, u_phys, 2, 1));
-    Un1(para_d.freeNodesx, para_d.freeNodesy, para_d.freeNodesz) = u_phys;
+    Un1(para_d.freeNodesx, :, :) = u_phys;
 
     if strcmp(para_d.device, 'gpu'); wait(Device); end
 
-    v_spec = tensorprod(FV_interior, invTzd', 3, 1);
+    v_spec = tensorprod(FV_interior, invTzn', 3, 1);
     v_spec = pagemtimes(v_spec, invTyd');
-    v_spec = squeeze(tensorprod(invTxd, v_spec, 2, 1));
-    v_spec = v_spec ./ helmholtz_uv;
-    v_phys = tensorprod(v_spec, Tzd', 3, 1);
+    v_spec = squeeze(tensorprod(invTxn, v_spec, 2, 1));
+    v_spec = v_spec ./ helmholtz_v;
+    v_phys = tensorprod(v_spec, Tzn', 3, 1);
     v_phys = pagemtimes(v_phys, Tyd');
-    v_phys = squeeze(tensorprod(Txd, v_phys, 2, 1));
-    Vn1(para_d.freeNodesx, para_d.freeNodesy, para_d.freeNodesz) = v_phys;
+    v_phys = squeeze(tensorprod(Txn, v_phys, 2, 1));
+    Vn1(:, para_d.freeNodesy, :) = v_phys;
 
     if strcmp(para_d.device, 'gpu'); wait(Device); end
 
-    w_spec = tensorprod(FW, invTzn', 3, 1);
+    w_spec = tensorprod(FW_interior, invTzd', 3, 1);
     w_spec = pagemtimes(w_spec, invTyn');
     w_spec = squeeze(tensorprod(invTxn, w_spec, 2, 1));
     w_spec = w_spec ./ helmholtz_w;
-    w_phys = tensorprod(w_spec, Tzn', 3, 1);
+    w_phys = tensorprod(w_spec, Tzd', 3, 1);
     w_phys = pagemtimes(w_phys, Tyn');
-    Wn1 = squeeze(tensorprod(Txn, w_phys, 2, 1));
+    w_phys = squeeze(tensorprod(Txn, w_phys, 2, 1));
+    Wn1(:, :, para_d.freeNodesz) = w_phys;
 
     if strcmp(para_d.device, 'gpu'); wait(Device); end
 
@@ -455,8 +461,8 @@ for Iter = Iter1:steps
     end
 
     if rem(Iter, freOut) == 0
-          saveTec(Iter,pathname,IJK,velName,Un1(:), Vn1(:), Wn1(:), Pn1(:),...
-             phin1(:), psi1(:), rho(:), mu(:)) %, ftx(:), fty(:), ftz(:)
+        saveTec(Iter,pathname,IJK,velName,Un1(:), Vn1(:), Wn1(:), ...
+            phin1(:)) %, ftx(:), fty(:), ftz(:)Pn1(:),, psi1(:), rho(:), mu(:)
     end
 
     % ----- Advance states -----
@@ -482,5 +488,4 @@ fprintf('=== %d Program Ends ===\n', stage);
 % save flow;
 % cd(currentLocation);
 
-datetime
 sending_to_emil(Iter,steps,1)
