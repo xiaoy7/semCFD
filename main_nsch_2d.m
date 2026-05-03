@@ -58,8 +58,8 @@ para_d.maxy = 2*LL1; % Square domain
 para_d.Ncellx = 20;
 para_d.Ncelly = 160;
 
-gravity = -0.01;
-tension1 = 0;
+gravity = 0;
+tension1 = 1;
 M0 = 1e-7; % 5e-7 1e-6;
 gamma1 = M0; % mobility
 gamma0 = 1.5;
@@ -131,7 +131,7 @@ Un_1 = Un;
 Vn_1 = Vn;
 
 % Initialize phase field (Cahn-Hilliard) with a circle
-phin1 = initialPhi2d(coordX,coordY,Cx,Cy,radius,eta,LL1);
+phin1 = initialPhi2d(coordX,coordY,Cx,Cy,radius,eta,LL1,1);
 
 % phin1 = -tanh((sqrt((coordX - Cx) .^ 2 + (coordY - Cy) .^ 2) - radius) ./ (sqrt(2) * eta));
 phin = phin1; % Previous step phase field
@@ -247,8 +247,8 @@ for Iter = 1:steps
 
     lapPhi = calLaplace(phin1,Dmatrixx2,DmatrixyT2);
     psi1 = 1/eta^2 * (phin1.^3 - phin1) - lapPhi;
-    % ft1 = tension1 * lambda * psi1 .* Dphix ;
-    % ft2 = tension1 * lambda * psi1 .* Dphiy;
+    ft1 = tension1 * lambda * psi1 .* Dphix;
+    ft2 = tension1 * lambda * psi1 .* Dphiy;
 
 
     %% navier stokes
@@ -275,9 +275,9 @@ for Iter = 1:steps
     Dustary = Dmux .* (DvStarx + DuStary) + 2 * Dmuy .* DvStary; % diffusion term in y
 
     uv31x = uCap ./ delta + (1/rho0 - 1./rho) .* DpStarx - uStar .* DuStarx  ...
-        - vStar .* DuStary + (miuRho - nium) .* lapU + Dustarx ./ rho;% + ft1 ./ rho;
+        - vStar .* DuStary + (miuRho - nium) .* lapU + Dustarx ./ rho + ft1 ./ rho;
     uv31y = vCap ./ delta + (1/rho0 - 1./rho) .* DpStary - uStar .* DvStarx...
-        - vStar .* DvStary + (miuRho - nium) .* lapV + Dustary ./ rho + gravity;% + ft2 ./ rho;
+        - vStar .* DvStary + (miuRho - nium) .* lapV + Dustary ./ rho + gravity + ft2 ./ rho;
 
     %% Step 2: Pressure correction (Poisson equation)
     % Calculate divergence of intermediate velocity RHS (using full matrices)
@@ -357,7 +357,18 @@ for Iter = 1:steps
 
 
     if rem(Iter, 10) == 0 % Print less frequently
-        fprintf('Iter = %d, error_u = %e\n', Iter, total_rms_error);
+        vel_mag = sqrt(Un1.^2 + Vn1.^2);
+        umax_spurious = max(vel_mag(:));
+        radius_field = sqrt((coordX - Cx).^2 + (coordY - Cy).^2);
+        inMask = radius_field <= radius - 2 * eta;
+        outMask = radius_field >= radius + 2 * eta;
+        p_in = mean(Pn1(inMask), 'omitnan');
+        p_out = mean(Pn1(outMask), 'omitnan');
+        delta_p_num = p_in - p_out;
+        delta_p_theory = tension1 * lambda / radius;
+        laplace_rel_err = abs(delta_p_num - delta_p_theory) / max(abs(delta_p_theory), eps);
+        fprintf('Iter=%d err=%e u_spurious=%e dp_num=%e dp_th=%e rel=%e\n', ...
+            Iter, total_rms_error, umax_spurious, delta_p_num, delta_p_theory, laplace_rel_err);
         % Output data periodically (e.g., every 100 steps)
         if rem(Iter, freOut) == 0
             saveTec(Iter,pathname,IJK,velName,Un1, Vn1, Pn1,...
@@ -389,4 +400,3 @@ time = toc;
 fprintf('Total computation time: %f seconds\n', time);
 
 fprintf('=== %d Program Ends ===\n', stage);
-
