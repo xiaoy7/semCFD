@@ -24,26 +24,10 @@ fprintf('=== %d Program Starts ===\n', stage);
 stage = stage + 1;
 
 %% set parameters
-ibm_case = getenv('SEMCFD_IBM_CASE');
-if isempty(ibm_case)
-    ibm_case = 'baby_spider_shower';
-end
-if strcmpi(ibm_case, 'baby_spider_shower')
-    rho_air = 1.225;
-    mu_air = 18e-6;
-    nu = mu_air / rho_air;
-    dT = 5e-5;
-    steps = 5000;
-else
-    RE = 2000; % Reynolds number
-    nu = 1/RE; % Kinematic viscosity
-    dT = 5e-4; % Reduced time step for stability
-    steps = 10000; % Increased steps for smaller dT
-end
-steps_override = str2double(getenv('SEMCFD_STEPS'));
-if isfinite(steps_override) && steps_override > 0
-    steps = floor(steps_override);
-end
+RE = 2000; % Reynolds number
+nu = 1/RE; % Kinematic viscosity
+dT = 5e-4; % Reduced time step for stability
+steps = 10000; % Increased steps for smaller dT
 tol = 1e-7; % Convergence tolerance (tightened slightly)
 alpha_helmholtz = 1 / dT; % Coefficient for Helmholtz equation (implicit time term)
 varName = 'U,V,PRE\n'; % export data
@@ -52,7 +36,7 @@ para_u.Np = 4; % polynomial degree
 Np = para_u.Np;
 
 para_u.basis = 'SEM'; %'FFT' 'SEM'
-if strcmp(para_u.basis, 'FFT')
+if para_u.basis == 'FFT'
     para_u.length = 1; % Assuming square domain if FFT
     para_u.minx = -para_u.length;
     para_u.maxx = para_u.length;
@@ -70,12 +54,6 @@ else
     % number of cells in finite element
     para_u.Ncellx = 50;
     para_u.Ncelly = 50;
-    if strcmpi(ibm_case, 'baby_spider_shower')
-        para_u.maxx = 1.5;
-        para_u.maxy = 1.0;
-        para_u.Ncellx = 96;
-        para_u.Ncelly = 64;
-    end
 
 end
 
@@ -125,22 +103,18 @@ gravity_potential = - coordY; % Hydrostatic pressure profile balancing gravity
 
 % immersed boundary method (IBM) setup
 ibm = ibm_setup2d(coordX, coordY, dT, para_u);
-if strcmpi(ibm_case, 'baby_spider_shower')
-    ibm = ibm_setup_baby_spider_shower2d(ibm, coordX, coordY, para_u);
-end
-vtk_dir = fullfile(pathname, 'viz_IB2d');
-vtk_dump_id = 0;
 
-% Export rigid body marker nodes
-N_nodes = ibm.marker_count;
+% Export rigid body nodes
+N_nodes = 100; % Number of boundary nodes
 filename = fullfile(pathname, 'rigid_body_nodes.dat'); % Change to .dat for Tecplot
 % Initial export at iteration 0
 fid = fopen(filename, 'w');
 fprintf(fid, 'TITLE = "Rigid Body Nodes with Velocity and Pressure"\n');
 fprintf(fid, 'VARIABLES = "X" "Y" "U" "V" "P" "Time"\n');
 fprintf(fid, 'ZONE T="Iteration 0" I=%d, F=POINT\n', N_nodes);
-x_nodes = ibm.markers(:, 1).';
-y_nodes = ibm.markers(:, 2).';
+theta = linspace(0, 2*pi, N_nodes);
+x_nodes = ibm.center(1) + ibm.radius * cos(theta);
+y_nodes = ibm.center(2) + ibm.radius * sin(theta);
 % Interpolate pressure at node locations
 
 % p_nodes = interp2(coordX, coordY, pre, x_nodes, y_nodes, 'linear', 0);
@@ -188,10 +162,6 @@ vn(para_u.bcNodesx, :) = 0; % left/right v=0
 % Precompute boundary contribution for the u Helmholtz RHS
 u_boundary = zeros(para_u.nx_all, para_u.ny_all);
 u_boundary(:, para_u.bcNodesy(2)) = lid_velocity;
-if exist('ibm', 'var') && isfield(ibm, 'case_name') ...
-        && strcmpi(ibm.case_name, 'baby_spider_shower')
-    u_boundary = ibm_baby_spider_boundary_velocity2d(coordX, coordY, ibm, 0);
-end
 
 laplacian_u_boundary_x = Dmatrixx * (Dmatrixx * u_boundary);
 laplacian_u_boundary_y = (u_boundary * DmatrixyT) * DmatrixyT;
@@ -236,9 +206,6 @@ else
     OUTPUT_Tecplot2D4(0, pathname, para_u.ny_all, para_u.nx_all, varName, ...
         coordX(:), coordY(:), un(:), vn(:), pre(:));
 end
-Omega0 = Dmatrixx * vn - un * DmatrixyT;
-sem_write_ibm_vtk2d(vtk_dir, vtk_dump_id, 0, coordX, coordY, ...
-    un, vn, pre, Omega0, zeros(size(un)), zeros(size(vn)), ibm);
 
 Iter1 = 1;
 else
@@ -280,13 +247,8 @@ for Iter = Iter1:steps
     DVnx = Dmatrixx * vn;
     DVny = vn * DmatrixyT;
 
-    uu_x = Dmatrixx * (un .* un);
-    uv_y = (un .* vn) * DmatrixyT;
-    uv_x = Dmatrixx * (un .* vn);
-    vv_y = (vn .* vn) * DmatrixyT;
-
-    convection_u = 0.5 * (un .* DUnx + vn .* DUny + uu_x + uv_y);
-    convection_v = 0.5 * (un .* DVnx + vn .* DVny + uv_x + vv_y);
+    convection_u = un .* DUnx + vn .* DUny;
+    convection_v = un .* DVnx + vn .* DVny;
 
     % Intermediate velocity RHS (explicit convection, implicit time term)
     U_star = un / dT - convection_u;
@@ -295,32 +257,15 @@ for Iter = Iter1:steps
 
     % Step 1.5: IBM forcing (direct forcing / Brinkman-style penalization)
     if ibm.enabled
-        if isfield(ibm, 'method') && strcmpi(ibm.method, 'lagrangian_structure')
-            ibm = ibm_begin_lagrangian_step2d(un, vn, ibm, dT, coordX, coordY);
-            if isfield(ibm, 'case_name') && strcmpi(ibm.case_name, 'baby_spider_shower')
-                ibm = ibm_update_spider_springs2d(ibm);
-            end
-        else
-            ibm = ibm_update_rigid_body2d(ibm, Iter, dT, coordX, coordY);
-            if strcmp(para_u.device, 'gpu')
-                ibm.mask = gpuArray(ibm.mask);
-                ibm.target_u = gpuArray(ibm.target_u);
-                ibm.target_v = gpuArray(ibm.target_v);
-            end
+        ibm = ibm_update_rigid_body2d(ibm, Iter, dT, coordX, coordY);
+        if strcmp(para_u.device, 'gpu')
+            ibm.mask = gpuArray(ibm.mask);
+            ibm.target_u = gpuArray(ibm.target_u);
+            ibm.target_v = gpuArray(ibm.target_v);
         end
-        [ibm_force_u, ibm_force_v, ibm] = ibm_direct_forcing2d(un, vn, ibm, dT);
+        [ibm_force_u, ibm_force_v] = ibm_direct_forcing2d(un, vn, ibm, dT);
         U_star = U_star + ibm_force_u;
         V_star = V_star + ibm_force_v;
-        if isfield(ibm, 'case_name') && strcmpi(ibm.case_name, 'baby_spider_shower')
-            [ext_force_u, ext_force_v] = ibm_external_force_spider_shower2d(un, vn, ibm, Iter * dT);
-            U_star = U_star + ext_force_u;
-            V_star = V_star + ext_force_v;
-        end
-    end
-
-    if any(~isfinite(U_star), 'all') || any(~isfinite(V_star), 'all')
-        error('IBM:NonFiniteIntermediateRHS', ...
-            'Non-finite intermediate velocity RHS at Iter=%d.', Iter);
     end
 
     %% Step 2: Pressure correction (Poisson equation)
@@ -355,21 +300,8 @@ for Iter = Iter1:steps
     FU = U_star - GradPre_x;
     FV = V_star - GradPre_y;
 
-    fubc_iter = fubc_contribution;
-    if ibm.enabled && isfield(ibm, 'case_name') ...
-            && strcmpi(ibm.case_name, 'baby_spider_shower')
-        u_boundary_iter = ibm_baby_spider_boundary_velocity2d(coordX, coordY, ibm, Iter * dT);
-        if strcmp(para_u.device, 'gpu')
-            u_boundary_iter = gpuArray(u_boundary_iter);
-        end
-        laplacian_u_boundary_x = Dmatrixx * (Dmatrixx * u_boundary_iter);
-        laplacian_u_boundary_y = (u_boundary_iter * DmatrixyT) * DmatrixyT;
-        laplacian_u_boundary = laplacian_u_boundary_x + laplacian_u_boundary_y;
-        fubc_iter = -nu * laplacian_u_boundary(para_u.freeNodesx, para_u.freeNodesy);
-    end
-
     % Adjust RHS for INTERIOR nodes using pre-calculated boundary contributions
-    FU_interior = FU(para_u.freeNodesx, para_u.freeNodesy) - fubc_iter;
+    FU_interior = FU(para_u.freeNodesx, para_u.freeNodesy) - fubc_contribution;
     FV_interior = FV(para_u.freeNodesx, para_u.freeNodesy);% - fvbc_contribution; % fvbc is zero here
 
     % Solve Helmholtz equation for u^(n+1) (INTERIOR nodes)
@@ -397,36 +329,16 @@ for Iter = Iter1:steps
     % end
 
     % Re-enforce lid-driven cavity boundary conditions after the solve
-    if ibm.enabled && isfield(ibm, 'case_name') ...
-            && strcmpi(ibm.case_name, 'baby_spider_shower')
-        un1(:, para_u.bcNodesy) = u_boundary_iter(:, para_u.bcNodesy);
-        un1(para_u.bcNodesx, :) = u_boundary_iter(para_u.bcNodesx, :);
-    else
-        un1(:, para_u.bcNodesy(2)) = lid_velocity;
-        un1(:, para_u.bcNodesy(1)) = 0;
-        un1(para_u.bcNodesx, :) = 0;
-    end
+    un1(:, para_u.bcNodesy(2)) = lid_velocity;
+    un1(:, para_u.bcNodesy(1)) = 0;
+    un1(para_u.bcNodesx, :) = 0;
     vn1(:, para_u.bcNodesy) = 0;
     vn1(para_u.bcNodesx, :) = 0;
 
-    if any(~isfinite(un1), 'all') || any(~isfinite(vn1), 'all')
-        error('IBM:NonFiniteVelocitySolve', ...
-            'Non-finite velocity solution at Iter=%d.', Iter);
-    end
-
-    if ibm.enabled && ibm.sharp_enforce
-        % Optional sharp re-enforcement for debugging very coarse marker sets.
+    if ibm.enabled
+        % Sharp re-enforcement of no-slip at immersed solid nodes
         un1 = (1 - ibm.mask) .* un1 + ibm.mask .* ibm.target_u;
         vn1 = (1 - ibm.mask) .* vn1 + ibm.mask .* ibm.target_v;
-    end
-
-    if ibm.enabled && isfield(ibm, 'method') && strcmpi(ibm.method, 'lagrangian_structure')
-        ibm = ibm_update_lagrangian_markers2d(un1, vn1, ibm, dT, coordX, coordY);
-        if strcmp(para_u.device, 'gpu') && ibm.sharp_enforce
-            ibm.mask = gpuArray(ibm.mask);
-            ibm.target_u = gpuArray(ibm.target_u);
-            ibm.target_v = gpuArray(ibm.target_v);
-        end
     end
 
     %% Error analysis and convergence check (based on INTERIOR nodes)
@@ -442,7 +354,7 @@ for Iter = Iter1:steps
     % Output data periodically (e.g., every 100 steps)
     if rem(Iter, 100) == 0
     % if total_rms_error <= tol
-      if strcmp(para_u.device,'gpu')
+        if strcmp(para_u.device,'gpu')
             un_out=gather(un1);
             vn_out=gather(vn1);
             pre_out=gather(pre);
@@ -452,35 +364,30 @@ for Iter = Iter1:steps
             pre_out=pre;
         end
 
-        time_val = Iter * dT;
-        vtk_dump_id = vtk_dump_id + 1;
-        if exist('ibm_force_u', 'var')
-            total_force_u = ibm_force_u;
-            total_force_v = ibm_force_v;
-        else
-            total_force_u = zeros(size(un1), 'like', un1);
-            total_force_v = zeros(size(vn1), 'like', vn1);
-        end
-        if exist('ext_force_u', 'var')
-            total_force_u = total_force_u + ext_force_u;
-            total_force_v = total_force_v + ext_force_v;
-        end
-        if strcmp(para_u.device, 'gpu')
-            force_u_out = gather(total_force_u);
-            force_v_out = gather(total_force_v);
-        else
-            force_u_out = total_force_u;
-            force_v_out = total_force_v;
-        end
-        if strcmp(para_u.device, 'gpu')
-            omega_out = gather(Dmatrixx * vn1 - un1 * DmatrixyT);
-        else
-            omega_out = Dmatrixx * vn1 - un1 * DmatrixyT;
-        end
-        sem_write_ibm_vtk2d(vtk_dir, vtk_dump_id, time_val, coordX, coordY, ...
-            un_out, vn_out, pre_out, omega_out, force_u_out, force_v_out, ibm);
+        OUTPUT_Tecplot2D5(Iter,pathname, para_u.nx_all, para_u.ny_all,  varName, ...
+            coordX(:), coordY(:), un_out(:), vn_out(:), pre_out(:));
 
- 
+        % Export rigid body nodes
+        fid = fopen(filename, 'a');
+        fprintf(fid, 'ZONE T="Iteration %d" I=%d, F=POINT\n', Iter, N_nodes);
+        theta = linspace(0, 2*pi, N_nodes);
+        x_nodes = ibm.center(1) + ibm.radius * cos(theta);
+        y_nodes = ibm.center(2) + ibm.radius * sin(theta);
+        % Interpolate pressure at node locations
+        if strcmp(para_u.device, 'gpu')
+            pre_cpu = gather(pre);
+        else
+            pre_cpu = pre;
+        end
+        p_nodes = interp2(coordX, coordY, pre_cpu, x_nodes, y_nodes, 'linear', 0);
+        time_val = Iter * dT;
+        for i = 1:N_nodes
+            fprintf(fid, '%.6f %.6f %.6f %.6f %.6f %.6f\n', x_nodes(i), ...
+                y_nodes(i), ibm.body_velocity(1), ibm.body_velocity(2), ...
+                p_nodes(i), time_val);
+        end
+        fclose(fid);
+
         % Iter
         % break
     end

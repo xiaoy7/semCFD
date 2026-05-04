@@ -15,11 +15,6 @@ if ~ibm.enabled
     return
 end
 
-if isfield(ibm, 'method') && strcmpi(ibm.method, 'lagrangian_structure')
-    [force_u, force_v, ibm] = ibm_spread_lagrangian_force2d(u, v, ibm, dT);
-    return
-end
-
 input_on_gpu = isa(u, 'gpuArray') || isa(v, 'gpuArray');
 u_cpu = gather(u);
 v_cpu = gather(v);
@@ -89,3 +84,4 @@ else
 end
 
 end
+
