@@ -1,6 +1,8 @@
-% xiao yao v2025.4.26
-% sovling the navier stokes equation based on spectral element method
+% xiao yao v2026.05.02
+% sovling the fluid-solid interaction problem with
+% immersed boundary method based on spectral element method
 % with 2D tensor product and projection method
+
 
 xy = 1;%0:继续计算, 1:重新开始
 xyxy = 1; %0:继续计算, 1:重新开始
@@ -24,8 +26,8 @@ stage = stage + 1;
 %% set parameters
 RE = 2000; % Reynolds number
 nu = 1/RE; % Kinematic viscosity
-dT = 1e-3; % Time step
-steps = 500000; % Max number of steps (increased for potential convergence)
+dT = 5e-4; % Reduced time step for stability
+steps = 10000; % Increased steps for smaller dT
 tol = 1e-7; % Convergence tolerance (tightened slightly)
 alpha_helmholtz = 1 / dT; % Coefficient for Helmholtz equation (implicit time term)
 varName = 'U,V,PRE\n'; % export data
@@ -34,7 +36,7 @@ para_u.Np = 4; % polynomial degree
 Np = para_u.Np;
 
 para_u.basis = 'SEM'; %'FFT' 'SEM'
-if para_u.basis == 'FFT'
+if strcmp(para_u.basis, 'FFT')
     para_u.length = 1; % Assuming square domain if FFT
     para_u.minx = -para_u.length;
     para_u.maxx = para_u.length;
@@ -101,20 +103,27 @@ gravity_potential = - coordY; % Hydrostatic pressure profile balancing gravity
 
 % immersed boundary method (IBM) setup
 ibm = ibm_setup2d(coordX, coordY, dT, para_u);
-if ibm.enabled
-    rigid_node_ids = find(ibm.mask >= 0.5);
-    rigid_nodes = [coordX(rigid_node_ids), coordY(rigid_node_ids)];
-    rigid_nodes_file = fullfile(pathname, 'immersed_body_nodes.dat');
-    fid_rigid = fopen(rigid_nodes_file, 'w');
-    if fid_rigid ~= -1
-        fprintf(fid_rigid, 'VARIABLES = "X","Y"\n');
-        fprintf(fid_rigid, 'ZONE T="immersed_body_nodes", I=%d, F=POINT\n', size(rigid_nodes, 1));
-        fprintf(fid_rigid, '%20.12e %20.12e\n', rigid_nodes');
-        fclose(fid_rigid);
-    else
-        warning('Could not open immersed body node export file: %s', rigid_nodes_file);
-    end
-end
+
+% Export rigid body marker nodes
+N_nodes = ibm.marker_count;
+filename = fullfile(pathname, 'rigid_body_nodes.dat'); % Change to .dat for Tecplot
+% Initial export at iteration 0
+fid = fopen(filename, 'w');
+fprintf(fid, 'TITLE = "Rigid Body Nodes with Velocity and Pressure"\n');
+fprintf(fid, 'VARIABLES = "X" "Y" "U" "V" "P" "Time"\n');
+fprintf(fid, 'ZONE T="Iteration 0" I=%d, F=POINT\n', N_nodes);
+x_nodes = ibm.markers(:, 1).';
+y_nodes = ibm.markers(:, 2).';
+% Interpolate pressure at node locations
+
+% p_nodes = interp2(coordX, coordY, pre, x_nodes, y_nodes, 'linear', 0);
+% time_val = 0;
+% for i = 1:N_nodes
+%     fprintf(fid, '%.6f %.6f %.6f %.6f %.6f %.6f\n', x_nodes(i), y_nodes(i), ...
+%         ibm.body_velocity(1), ibm.body_velocity(2), p_nodes(i), time_val);
+% end
+% fclose(fid);
+% fprintf('Rigid body nodes exported to %s\n', filename);
 
 %% initial parameters
 fprintf('=== %d initial parameter\n', stage);
@@ -142,7 +151,7 @@ poisson_p(1, 1) = 1;
 
 % Set initial boundary conditions for velocity
 % Lid-driven cavity: u = 1 on top boundary, no-slip elsewhere
-lid_velocity = 1;  % Set lid velocity to 1 for Re=100
+lid_velocity = 0;  % Set lid velocity to 1 for Re=100
 un(:, para_u.bcNodesy(2)) = lid_velocity; % Set top boundary u=1
 un(:, para_u.bcNodesy(1)) = 0; % bottom boundary u=0
 un(para_u.bcNodesx, :) = 0; % left/right boundaries u=0
@@ -242,13 +251,18 @@ for Iter = Iter1:steps
 
     % Intermediate velocity RHS (explicit convection, implicit time term)
     U_star = un / dT - convection_u;
-    V_star = vn / dT - convection_v;  % Removed gravity term (-1) for lid-driven cavity
+    V_star = vn / dT - convection_v - 1;  % Add gravity term (downward acceleration)
     % Note: Diffusion term is handled implicitly in the Helmholtz solve (Step 3)
 
     % Step 1.5: IBM forcing (direct forcing / Brinkman-style penalization)
     if ibm.enabled
-        ibm = ibm_update_rigid_body2d(ibm, Iter, dT);
-        [ibm_force_u, ibm_force_v] = ibm_direct_forcing2d(un, vn, ibm, dT);
+        ibm = ibm_update_rigid_body2d(ibm, Iter, dT, coordX, coordY);
+        if strcmp(para_u.device, 'gpu')
+            ibm.mask = gpuArray(ibm.mask);
+            ibm.target_u = gpuArray(ibm.target_u);
+            ibm.target_v = gpuArray(ibm.target_v);
+        end
+        [ibm_force_u, ibm_force_v, ibm] = ibm_direct_forcing2d(un, vn, ibm, dT);
         U_star = U_star + ibm_force_u;
         V_star = V_star + ibm_force_v;
     end
@@ -320,8 +334,8 @@ for Iter = Iter1:steps
     vn1(:, para_u.bcNodesy) = 0;
     vn1(para_u.bcNodesx, :) = 0;
 
-    if ibm.enabled
-        % Sharp re-enforcement of no-slip at immersed solid nodes
+    if ibm.enabled && ibm.sharp_enforce
+        % Optional sharp re-enforcement for debugging very coarse marker sets.
         un1 = (1 - ibm.mask) .* un1 + ibm.mask .* ibm.target_u;
         vn1 = (1 - ibm.mask) .* vn1 + ibm.mask .* ibm.target_v;
     end
@@ -337,8 +351,8 @@ for Iter = Iter1:steps
     end
 
     % Output data periodically (e.g., every 100 steps)
-    % if rem(Iter, 1) == 0
-    if total_rms_error <= tol
+    if rem(Iter, 100) == 0
+    % if total_rms_error <= tol
         if strcmp(para_u.device,'gpu')
             un_out=gather(un1);
             vn_out=gather(vn1);
@@ -352,8 +366,30 @@ for Iter = Iter1:steps
         OUTPUT_Tecplot2D5(Iter,pathname, para_u.nx_all, para_u.ny_all,  varName, ...
             coordX(:), coordY(:), un_out(:), vn_out(:), pre_out(:));
 
-        Iter
-        break
+        % Export rigid body nodes
+        fid = fopen(filename, 'a');
+        fprintf(fid, 'ZONE T="Iteration %d" I=%d, F=POINT\n', Iter, N_nodes);
+        x_nodes = ibm.markers(:, 1).';
+        y_nodes = ibm.markers(:, 2).';
+        % Interpolate pressure at node locations
+        if strcmp(para_u.device, 'gpu')
+            pre_cpu = gather(pre);
+        else
+            pre_cpu = pre;
+        end
+        pressure_interp = griddedInterpolant({coordX(:, 1), coordY(1, :)}, ...
+                                             pre_cpu, 'linear', 'nearest');
+        p_nodes = pressure_interp(x_nodes, y_nodes);
+        time_val = Iter * dT;
+        for i = 1:N_nodes
+            fprintf(fid, '%.6f %.6f %.6f %.6f %.6f %.6f\n', x_nodes(i), ...
+                y_nodes(i), ibm.body_velocity(1), ibm.body_velocity(2), ...
+                p_nodes(i), time_val);
+        end
+        fclose(fid);
+
+        % Iter
+        % break
     end
 
  
