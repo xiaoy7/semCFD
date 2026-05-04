@@ -1,7 +1,7 @@
 function plt_Zone(filename,zone_title,IJK,time,Mat_Data)
 %创建zone,point格式
 f_id=fopen(filename,'a');
-N=size(Mat_Data,1);
+% N=size(Mat_Data,1);
 
 Dim=numel(IJK);
 if Dim==1
@@ -26,9 +26,12 @@ if ~isempty(time)
     fprintf(f_id,'%s \r\n',s);
 end
 
+ fprintf('=== write Zone1 ===\n');
 %导入数据
-for k=1:N
-    fprintf(f_id,'%s \r\n',num2str(Mat_Data(k,:)));
-end
+M = size(Mat_Data, 2);
+format_str = [repmat('%g ', 1, M-1), '%g\r\n'];
+fprintf(f_id, format_str, Mat_Data');
+
+
 fclose(f_id);
 end
