@@ -1,5 +1,5 @@
 function ibm = ibm_setup2d(coordX, coordY, dT, para)
-<<<<<<< HEAD
+% <<<<<<< HEAD
 % Setup an immersed boundary description on the SEM grid.
 % Current version initializes one fixed circular rigid body.
 
@@ -21,7 +21,7 @@ ibm.target_u = zeros(size(coordX));
 ibm.target_v = zeros(size(coordY));
 ibm.body_velocity = [0, 0];
 ibm.body_omega = 0;
-=======
+% =======
 %IBM_SETUP2D Build a marker-based IBM model.
 %   Set ibm.method to:
 %       'lagrangian_structure'  Peskin-style elastic Lagrangian structure
@@ -84,6 +84,6 @@ ibm.last_marker_force = zeros(ibm.marker_count, 2);
 ibm.hydro_force = [0, 0];
 ibm.hydro_torque = 0;
 ibm.dT = dT;
->>>>>>> main
+% >>>>>>> main
 
 end

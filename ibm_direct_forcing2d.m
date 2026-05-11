@@ -1,7 +1,4 @@
-<<<<<<< HEAD
-function [force_u, force_v] = ibm_direct_forcing2d(u, v, ibm, dT)
-% Compute direct-forcing IBM source terms for momentum equations.
-=======
+
 function [force_u, force_v, ibm] = ibm_direct_forcing2d(u, v, ibm, dT)
 %IBM_DIRECT_FORCING2D Marker-based direct-forcing immersed boundary source.
 %   force_u and force_v are Eulerian acceleration fields to add to the
@@ -12,15 +9,16 @@ function [force_u, force_v, ibm] = ibm_direct_forcing2d(u, v, ibm, dT)
 %
 %   The equal and opposite hydrodynamic load on the body is accumulated in
 %   ibm.hydro_force and ibm.hydro_torque.
->>>>>>> main
+% >>>>>>> main
 
 if ~ibm.enabled
     force_u = zeros(size(u), 'like', u);
     force_v = zeros(size(v), 'like', v);
+    fprintf('=== return ===\n');
     return
 end
 
-<<<<<<< HEAD
+% <<<<<<< HEAD
 penalty = ibm.penalty;
 if isempty(penalty)
     penalty = 1 / max(dT, eps);
@@ -28,7 +26,7 @@ end
 
 force_u = penalty * ibm.mask .* (ibm.target_u - u);
 force_v = penalty * ibm.mask .* (ibm.target_v - v);
-=======
+% =======
 if isfield(ibm, 'method') && strcmpi(ibm.method, 'lagrangian_structure')
     [force_u, force_v, ibm] = ibm_spread_lagrangian_force2d(u, v, ibm, dT);
     return
@@ -92,7 +90,7 @@ ibm.last_marker_force = marker_force;
 ibm.hydro_force = -sum(marker_force, 1);
 r = ibm.markers - ibm.center;
 ibm.hydro_torque = -sum(r(:, 1) .* marker_force(:, 2) ...
-                      - r(:, 2) .* marker_force(:, 1));
+    - r(:, 2) .* marker_force(:, 1));
 
 if input_on_gpu
     force_u = gpuArray(force_u_cpu);
@@ -101,6 +99,6 @@ else
     force_u = force_u_cpu;
     force_v = force_v_cpu;
 end
->>>>>>> main
+% >>>>>>> main
 
 end
