@@ -285,7 +285,7 @@ for Iter = Iter1:steps
 
     % Intermediate velocity RHS (explicit convection, implicit time term)
     U_star = un / dT - convection_u;
-    V_star = vn / dT - convection_v - 1;  % Add gravity term (downward acceleration)
+    V_star = vn / dT - convection_v ;  % Add gravity term (downward acceleration)
     % Note: Diffusion term is handled implicitly in the Helmholtz solve (Step 3)
 
     % Step 1.5: IBM forcing (direct forcing / Brinkman-style penalization)
