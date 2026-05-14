@@ -39,8 +39,6 @@ if xy == 1
     variables_grid={'X','Y','Z'};
     velName={'u','v','w','phi'}; %'p','ftx','fty','ftz','psi','rho','mu'
 
-    % parpool(size(velName,2));
-
     filename_grid = fullfile(pathname, ['grid','.plt']);
 
     LL1 = 100;
@@ -201,6 +199,7 @@ if xy == 1
 
     poisson = reshape(lambda_xn, [], 1, 1) + reshape(lambda_yn, 1, [], 1) ...
         + reshape(lambda_zn, 1, 1, []);
+        poisson_p = poisson;
     helmholtzPhi = alphaCH - poisson;
     helmholtzPsi = (alphaCH + bigs / eta ^ 2) + poisson;
 
@@ -393,7 +392,7 @@ for Iter = Iter1:steps
     pre_spec = tensorprod(f_solver, invTzn', 3, 1);
     pre_spec = pagemtimes(pre_spec, invTyn');
     pre_spec = squeeze(tensorprod(invTxn, pre_spec, 2, 1));
-    pre_spec = pre_spec ./ poisson;
+    pre_spec = pre_spec ./ poisson_p;
     Pn1 = tensorprod(pre_spec, Tzn', 3, 1);
     Pn1 = pagemtimes(Pn1, Tyn');
     Pn1 = squeeze(tensorprod(Txn, Pn1, 2, 1));
