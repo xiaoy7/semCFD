@@ -1,4 +1,4 @@
-% CH_MMS_CONVERGENCE_2D Manufactured-solution convergence test for 2D CH.
+% CH_CONVERGENCE_2D Manufactured-solution convergence test for 2D CH.
 %   This driver verifies the SEM phase-field discretization on [-1,1]^2 with
 %
 %       phi_exact = sin(pi*x)*sin(pi*y)*cos(t).
@@ -10,6 +10,8 @@
 %
 %   with homogeneous Dirichlet data for phi and mu. For this manufactured
 %   solution both fields vanish on the boundary.
+clc
+clear
 
 repoDir = fileparts(mfilename('fullpath'));
 addpath(genpath(repoDir));

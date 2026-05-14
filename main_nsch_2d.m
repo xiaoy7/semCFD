@@ -250,7 +250,6 @@ for Iter = 1:steps
     ft1 = tension1 * lambda * psi1 .* Dphix;
     ft2 = tension1 * lambda * psi1 .* Dphiy;
 
-
     %% navier stokes
     phin1(phin1 >  1) =  1;
     phin1(phin1 < -1) = -1;
@@ -268,7 +267,6 @@ for Iter = 1:steps
 
     lapU = calLaplace(uStar, Dmatrixx2, DmatrixyT2);
     lapV = calLaplace(vStar, Dmatrixx2, DmatrixyT2);
-
 
     miuRho = mu ./ rho;
     Dustarx = 2 * Dmux .* DuStarx + Dmuy .* (DvStarx + DuStary); % diffusion term in x
