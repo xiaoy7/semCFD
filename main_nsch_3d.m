@@ -9,7 +9,7 @@
 % bubble tension = 0.01 0.1
 % delta = 0.01 1
 % 13145.98 s
-% M0 = 1e-5 1e-3; 1e-4; 1e-6; 
+% M0 = 1e-5 1e-3; 1e-4; 1e-6;
 % 20764.49 s
 
 xy = 1;%0:继续计算, 1:重新开始
@@ -150,14 +150,14 @@ if xy == 1
     Un_1 = Un; Vn_1 = Vn;
 
     [phin,Wn] = intialPhi(coordX,coordY,coordZ,Cx,Cy,Cz,radius,eta,hz,uw,LL1);
-       Wn1 = Wn;
+    Wn1 = Wn;
     Wn_1 = Wn;
 
-     %% write
+    %% write
     fprintf('=== %d write ===\n', stage);
     stage = stage + 1;
 
- 
+
     title='';%无标题
     zone_title='';%无标题
     time=0;%非定常时间
@@ -186,7 +186,7 @@ if xy == 1
     poisson = reshape(lambda_xn, [], 1, 1) + reshape(lambda_yn, 1, [], 1) ...
         + reshape(lambda_zd, 1, 1, []);
     helmholtz_w = gamma0 / delta + nium * poisson;
-    
+
     % poisson_nd = reshape(lambda_xn, [], 1, 1) + reshape(lambda_yn, 1, [], 1) ...
     % + reshape(lambda_zd, 1, 1, []);
 
@@ -199,7 +199,7 @@ if xy == 1
 
     poisson = reshape(lambda_xn, [], 1, 1) + reshape(lambda_yn, 1, [], 1) ...
         + reshape(lambda_zn, 1, 1, []);
-        poisson_p = poisson;
+    poisson_p = poisson;
     helmholtzPhi = alphaCH - poisson;
     helmholtzPsi = (alphaCH + bigs / eta ^ 2) + poisson;
 
@@ -323,7 +323,7 @@ for Iter = Iter1:steps
 
     rho = rhoplus + phin1 * rhomius;
     mu = muplus + phin1 * mumius;
-    
+
     Dmux = mumius * Dphix;
     Dmuy = mumius * Dphiy;
     Dmuz = mumius * Dphiz;
@@ -375,9 +375,9 @@ for Iter = Iter1:steps
     midy = rho0 * (uv31y - vStar / delta + nium * lapV);
     midz = rho0 * (uv31z - wStar / delta + nium * lapW);
 
-    Fx(:)=0;
-    Fy(:)=0;
-    Fz(:)=0;
+    Fx(:) = 0;
+    Fy(:) = 0;
+    Fz(:) = 0;
 
     Fx(1, :, :) = -midx(1, :, :) .* weight_yz;
     Fx(end, :, :) = midx(end, :, :) .* weight_yz;
