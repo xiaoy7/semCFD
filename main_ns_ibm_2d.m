@@ -2,245 +2,240 @@
 % sovling the fluid-solid interaction problem with
 % immersed boundary method based on spectral element method
 % with 2D tensor product and projection method
-
+% 511.230625 seconds 120.288320 seconds 117.950050 seconds
 
 xy = 1;%0:继续计算, 1:重新开始
 xyxy = 1; %0:继续计算, 1:重新开始
 if xy == 1
-clc
-clear
-addpath(genpath("D:\semMatlab")) % Ensure this path is correct
+    clc
+    clear
+    addpath(genpath("D:\semMatlab")) % Ensure this path is correct
 
-currentLocation = pwd;
-cd ..
-fileLocation = pwd;
-currentTime = datetime('now', 'Format', 'yyyyMMdd_HHmm_ss');% 获取当前日期和时间
-pathname = [fileLocation, '\time' char(currentTime)];
-cd(currentLocation)
-copyfile("*.m", pathname)
+    currentLocation = pwd;
+    cd ..
+    fileLocation = pwd;
+    currentTime = datetime('now', 'Format', 'yyyyMMdd_HHmm_ss');% 获取当前日期和时间
+    pathname = [fileLocation, '\time' char(currentTime)];
+    cd(currentLocation)
+    copyfile("*.m", pathname)
 
-stage = 1;
-fprintf('=== %d Program Starts ===\n', stage);
-stage = stage + 1;
+    stage = 1;
+    fprintf('=== %d Program Starts ===\n', stage);
+    stage = stage + 1;
 
-%% set parameters
-ibm_case = getenv('SEMCFD_IBM_CASE');
-if isempty(ibm_case)
-    ibm_case = 'baby_spider_shower';
-end
-if strcmpi(ibm_case, 'baby_spider_shower')
-    rho_air = 1.225;
-    mu_air = 18e-6;
-    nu = mu_air / rho_air;
-    dT = 5e-5;
-    steps = 5000;
-else
-    RE = 2000; % Reynolds number
-    nu = 1/RE; % Kinematic viscosity
-    dT = 5e-4; % Reduced time step for stability
-    steps = 10000; % Increased steps for smaller dT
-end
-steps_override = str2double(getenv('SEMCFD_STEPS'));
-if isfinite(steps_override) && steps_override > 0
-    steps = floor(steps_override);
-end
-tol = 1e-7; % Convergence tolerance (tightened slightly)
-alpha_helmholtz = 1 / dT; % Coefficient for Helmholtz equation (implicit time term)
-varName = 'U,V,PRE\n'; % export data
-
-para_u.Np = 4; % polynomial degree
-Np = para_u.Np;
-
-para_u.basis = 'SEM'; %'FFT' 'SEM'
-if strcmp(para_u.basis, 'FFT')
-    para_u.length = 1; % Assuming square domain if FFT
-    para_u.minx = -para_u.length;
-    para_u.maxx = para_u.length;
-    para_u.miny = -para_u.length;
-    para_u.maxy = para_u.length;
-    para_u.Ncellx = 1;
-    para_u.Ncelly = 1; % FFT implies single domain usually
-else
-    para_u.minx = 0;
-    para_u.maxx = 1;  % Unit square domain
-    para_u.miny = 0;
-    para_u.maxy = 1;  % Unit square domain
-
-    para_u.Ncell = 10; % number of cells in finite element (default)
-    % number of cells in finite element
-    para_u.Ncellx = 50;
-    para_u.Ncelly = 50;
+    %% set parameters
+    ibm_case = getenv('SEMCFD_IBM_CASE');
+    if isempty(ibm_case)
+        ibm_case = 'baby_spider_shower';
+    end
     if strcmpi(ibm_case, 'baby_spider_shower')
-        para_u.maxx = 1.5;
-        para_u.maxy = 1.0;
-        para_u.Ncellx = 96;
-        para_u.Ncelly = 64;
+        rho_air = 1.225;
+        mu_air = 18e-6;
+        nu = mu_air / rho_air;
+        dT = 5e-5;
+        steps = 2000;
+    else
+        RE = 2000; % Reynolds number
+        nu = 1/RE; % Kinematic viscosity
+        dT = 5e-4; % Reduced time step for stability
+        steps = 10000; % Increased steps for smaller dT
+    end
+    steps_override = str2double(getenv('SEMCFD_STEPS'));
+    if isfinite(steps_override) && steps_override > 0
+        steps = floor(steps_override);
+    end
+    tol = 1e-7; % Convergence tolerance (tightened slightly)
+    alpha_helmholtz = 1 / dT; % Coefficient for Helmholtz equation (implicit time term)
+    varName = 'U,V,PRE\n'; % export data
+
+    para_u.Np = 4; % polynomial degree
+    Np = para_u.Np;
+
+    para_u.basis = 'SEM'; %'FFT' 'SEM'
+    if strcmp(para_u.basis, 'FFT')
+        para_u.length = 1; % Assuming square domain if FFT
+        para_u.minx = -para_u.length;
+        para_u.maxx = para_u.length;
+        para_u.miny = -para_u.length;
+        para_u.maxy = para_u.length;
+        para_u.Ncellx = 1;
+        para_u.Ncelly = 1; % FFT implies single domain usually
+    else
+        para_u.minx = 0;
+        para_u.maxx = 1;  % Unit square domain
+        para_u.miny = 0;
+        para_u.maxy = 1;  % Unit square domain
+
+        % para_u.Ncell = 10; % number of cells in finite element (default)
+        % number of cells in finite element
+        para_u.Ncellx = 50;
+        para_u.Ncelly = 50;
+        if strcmpi(ibm_case, 'baby_spider_shower')
+            para_u.maxx = 1.5;
+            para_u.maxy = 1.0;
+            para_u.Ncellx = 96;
+            para_u.Ncelly = 64;
+        end
+
     end
 
-end
+    if gpuDeviceCount('available') < 1
+        para_u.device = 'cpu';
+        Device = [];
+    else
+        para_u.device = 'gpu';
+        para_u.device_id = 1; % Choose appropriate GPU ID
+        Device = gpuDevice(para_u.device_id);
+    end
 
-if gpuDeviceCount('available') < 1
-    para_u.device = 'cpu';
-    Device = [];
-else
-    para_u.device = 'gpu';
-    para_u.device_id = 1; % Choose appropriate GPU ID
-    Device = gpuDevice(para_u.device_id);
-end
+    % polynomial degree
+    Npx = Np;
+    Npy = Np;
+    para_u.Npx = Npx;
+    para_u.Npy = Npy;
+    para_u.nx_all = para_u.Ncellx * Npx + 1;
+    para_u.ny_all = para_u.Ncelly * Npy + 1;
 
-% polynomial degree
-Npx = Np;
-Npy = Np;
-para_u.Npx = Npx;
-para_u.Npy = Npy;
-para_u.nx_all = para_u.Ncellx * Npx + 1;
-para_u.ny_all = para_u.Ncelly * Npy + 1;
+    para_u.bc = 'dirichlet'; % Boundary condition type for velocity
+    % Parameterv = Parameteru; % Redundant
+    para_p = para_u; % Use same domain/discretization parameters initially
+    para_p.bc = 'neumann'; % Boundary condition type for pressure correction
 
-para_u.bc = 'dirichlet'; % Boundary condition type for velocity
-% Parameterv = Parameteru; % Redundant
-para_p = para_u; % Use same domain/discretization parameters initially
-para_p.bc = 'neumann'; % Boundary condition type for pressure correction
+    % Calculate free/boundary nodes based on BC type
+    para_u = parameter_bc2d(para_u);
+    para_p = parameter_bc2d(para_p); % Pressure uses Neumann
 
-% Calculate free/boundary nodes based on BC type
-para_u = parameter_bc2d(para_u);
-para_p = parameter_bc2d(para_p); % Pressure uses Neumann
+    % the domain is [Lminx, Lmaxx] x [Lminy, Lmaxy]
 
-% the domain is [Lminx, Lmaxx] x [Lminy, Lmaxy]
+    %% Qk finite element with (k+1)-point Gauss-Lobatto quadrature
+    fprintf('Laplacian is Q%d spectral element method \n', Np)
 
-%% Qk finite element with (k+1)-point Gauss-Lobatto quadrature
-fprintf('Laplacian is Q%d spectral element method \n', Np)
+    % Get matrices for Velocity (Dirichlet BCs applied internally by cal_matrix2 for INTERIOR solve)
+    [dx, x, Tx, ~, lambda_xd, Dmatrixx, ex] = cal_matrix2('x', para_u); % Hx not needed directly
+    [dy, y, Ty, ~, lambda_yd, Dmatrixy, ey] = cal_matrix2('y', para_u); % Hy not needed directly
+    DmatrixyT = Dmatrixy'; % Transpose for convenience
 
-% Get matrices for Velocity (Dirichlet BCs applied internally by cal_matrix2 for INTERIOR solve)
-[dx, x, Tx, ~, lambda_xd, Dmatrixx, ex] = cal_matrix2('x', para_u); % Hx not needed directly
-[dy, y, Ty, ~, lambda_yd, Dmatrixy, ey] = cal_matrix2('y', para_u); % Hy not needed directly
-DmatrixyT = Dmatrixy'; % Transpose for convenience
+    % Get matrices for Pressure (Neumann BCs - use cal_matrix2_1 or similar)
+    % Ensure cal_matrix2_1 correctly handles Neumann for pressure
+    [dxn, exn, Txn, lambda_xn] = cal_matrix2_1('x', para_p,x);
+    [dyn, eyn, Tyn, lambda_yn] = cal_matrix2_1('y', para_p,y);
 
-% Get matrices for Pressure (Neumann BCs - use cal_matrix2_1 or similar)
-% Ensure cal_matrix2_1 correctly handles Neumann for pressure
-[dxn, exn, Txn, lambda_xn] = cal_matrix2_1('x', para_p,x);
-[dyn, eyn, Tyn, lambda_yn] = cal_matrix2_1('y', para_p,y);
+    [coordY, coordX] = meshgrid(y, x); % Grid coordinates for output/plotting
+    gravity_potential = - coordY; % Hydrostatic pressure profile balancing gravity
+    [nx, ny] = size(coordX);
+    points = [reshape(coordX, [], 1), reshape(coordY, [], 1), zeros(nx * ny, 1)];
+    pointst = points';
+    % immersed boundary method (IBM) setup
+    ibm = ibm_setup2d(coordX, coordY, dT, para_u);
+    if strcmpi(ibm_case, 'baby_spider_shower')
+        ibm = ibm_setup_baby_spider_shower2d(ibm, coordX, coordY, para_u);
+    end
+    vtk_dir = fullfile(pathname, 'viz_IB2d');
+    vtk_dump_id = 0;
 
-[coordY, coordX] = meshgrid(y, x); % Grid coordinates for output/plotting
-gravity_potential = - coordY; % Hydrostatic pressure profile balancing gravity
+    % Export rigid body marker nodes
+    N_nodes = ibm.marker_count;
+    filename = fullfile(pathname, 'rigid_body_nodes.dat'); % Change to .dat for Tecplot
+    % Initial export at iteration 0
+    fid = fopen(filename, 'w');
+    fprintf(fid, 'TITLE = "Rigid Body Nodes with Velocity and Pressure"\n');
+    fprintf(fid, 'VARIABLES = "X" "Y" "U" "V" "P" "Time"\n');
+    fprintf(fid, 'ZONE T="Iteration 0" I=%d, F=POINT\n', N_nodes);
+    x_nodes = ibm.markers(:, 1).';
+    y_nodes = ibm.markers(:, 2).';
+    % Interpolate pressure at node locations
 
-% immersed boundary method (IBM) setup
-ibm = ibm_setup2d(coordX, coordY, dT, para_u);
-if strcmpi(ibm_case, 'baby_spider_shower')
-    ibm = ibm_setup_baby_spider_shower2d(ibm, coordX, coordY, para_u);
-end
-vtk_dir = fullfile(pathname, 'viz_IB2d');
-vtk_dump_id = 0;
+    % p_nodes = interp2(coordX, coordY, pre, x_nodes, y_nodes, 'linear', 0);
+    % time_val = 0;
+    % for i = 1:N_nodes
+    %     fprintf(fid, '%.6f %.6f %.6f %.6f %.6f %.6f\n', x_nodes(i), y_nodes(i), ...
+    %         ibm.body_velocity(1), ibm.body_velocity(2), p_nodes(i), time_val);
+    % end
+    % fclose(fid);
+    % fprintf('Rigid body nodes exported to %s\n', filename);
 
-% Export rigid body marker nodes
-N_nodes = ibm.marker_count;
-filename = fullfile(pathname, 'rigid_body_nodes.dat'); % Change to .dat for Tecplot
-% Initial export at iteration 0
-fid = fopen(filename, 'w');
-fprintf(fid, 'TITLE = "Rigid Body Nodes with Velocity and Pressure"\n');
-fprintf(fid, 'VARIABLES = "X" "Y" "U" "V" "P" "Time"\n');
-fprintf(fid, 'ZONE T="Iteration 0" I=%d, F=POINT\n', N_nodes);
-x_nodes = ibm.markers(:, 1).';
-y_nodes = ibm.markers(:, 2).';
-% Interpolate pressure at node locations
+    %% initial parameters
+    fprintf('=== %d initial parameter\n', stage);
+    stage = stage + 1;
 
-% p_nodes = interp2(coordX, coordY, pre, x_nodes, y_nodes, 'linear', 0);
-% time_val = 0;
-% for i = 1:N_nodes
-%     fprintf(fid, '%.6f %.6f %.6f %.6f %.6f %.6f\n', x_nodes(i), y_nodes(i), ...
-%         ibm.body_velocity(1), ibm.body_velocity(2), p_nodes(i), time_val);
-% end
-% fclose(fid);
-% fprintf('Rigid body nodes exported to %s\n', filename);
+    invTx = pinv(Tx); % Inverse transforms for INTERIOR velocity nodes
+    invTy = pinv(Ty);
+    invTxn = pinv(Txn); % Inverse transforms for pressure nodes (Neumann)
+    invTyn = pinv(Tyn);
 
-%% initial parameters
-fprintf('=== %d initial parameter\n', stage);
-stage = stage + 1;
+    % Build spectral eigenvalue tensors for Helmholtz and Poisson solves
+    lambda_xd_col = lambda_xd(:);
+    lambda_yd_col = lambda_yd(:);
+    helmholtz_u = reshape(lambda_xd_col, [], 1) + reshape(lambda_yd_col, 1, []);
+    helmholtz_u = alpha_helmholtz + nu * helmholtz_u;
 
-invTx = pinv(Tx); % Inverse transforms for INTERIOR velocity nodes
-invTy = pinv(Ty);
-invTxn = pinv(Txn); % Inverse transforms for pressure nodes (Neumann)
-invTyn = pinv(Tyn);
+    lambda_xn_col = lambda_xn(:);
+    lambda_yn_col = lambda_yn(:);
+    poisson_p = reshape(lambda_xn_col, [], 1) + reshape(lambda_yn_col, 1, []);
+    % Regularize constant pressure mode for pure Neumann pressure
+    poisson_p(1, 1) = 1;
 
-% Build spectral eigenvalue tensors for Helmholtz and Poisson solves
-lambda_xd_col = lambda_xd(:);
-lambda_yd_col = lambda_yd(:);
-helmholtz_u = reshape(lambda_xd_col, [], 1) + reshape(lambda_yd_col, 1, []);
-helmholtz_u = alpha_helmholtz + nu * helmholtz_u;
+    % Initialize velocity and pressure fields
+    [un, vn, pre] = deal(zeros(para_u.nx_all, para_u.ny_all));
 
-lambda_xn_col = lambda_xn(:);
-lambda_yn_col = lambda_yn(:);
-poisson_p = reshape(lambda_xn_col, [], 1) + reshape(lambda_yn_col, 1, []);
-% Regularize constant pressure mode for pure Neumann pressure
-poisson_p(1, 1) = 1;
+    % Set initial boundary conditions for velocity
+    % Lid-driven cavity: u = 1 on top boundary, no-slip elsewhere
+    lid_velocity = 0;  % Set lid velocity to 1 for Re=100
+    un(:, para_u.bcNodesy(2)) = lid_velocity; % Set top boundary u=1
+    un(:, para_u.bcNodesy(1)) = 0; % bottom boundary u=0
+    un(para_u.bcNodesx, :) = 0; % left/right boundaries u=0
+    vn(:, para_u.bcNodesy) = 0; % top/bottom v=0
+    vn(para_u.bcNodesx, :) = 0; % left/right v=0
 
-% Initialize velocity and pressure fields
-[un, vn, pre] = deal(zeros(para_u.nx_all, para_u.ny_all));
+    % Precompute boundary contribution for the u Helmholtz RHS
+    u_boundary = zeros(para_u.nx_all, para_u.ny_all);
+    u_boundary(:, para_u.bcNodesy(2)) = lid_velocity;
+    if exist('ibm', 'var') && isfield(ibm, 'case_name') ...
+            && strcmpi(ibm.case_name, 'baby_spider_shower')
+        u_boundary = ibm_baby_spider_boundary_velocity2d(coordX, coordY, ibm, 0);
+    end
 
-% Set initial boundary conditions for velocity
-% Lid-driven cavity: u = 1 on top boundary, no-slip elsewhere
-lid_velocity = 0;  % Set lid velocity to 1 for Re=100
-un(:, para_u.bcNodesy(2)) = lid_velocity; % Set top boundary u=1
-un(:, para_u.bcNodesy(1)) = 0; % bottom boundary u=0
-un(para_u.bcNodesx, :) = 0; % left/right boundaries u=0
-vn(:, para_u.bcNodesy) = 0; % top/bottom v=0
-vn(para_u.bcNodesx, :) = 0; % left/right v=0
+    laplacian_u_boundary_x = Dmatrixx * (Dmatrixx * u_boundary);
+    laplacian_u_boundary_y = (u_boundary * DmatrixyT) * DmatrixyT;
+    laplacian_u_boundary = laplacian_u_boundary_x + laplacian_u_boundary_y;
+    fubc_contribution = -nu * laplacian_u_boundary(para_u.freeNodesx, para_u.freeNodesy);
 
-% Precompute boundary contribution for the u Helmholtz RHS
-u_boundary = zeros(para_u.nx_all, para_u.ny_all);
-u_boundary(:, para_u.bcNodesy(2)) = lid_velocity;
-if exist('ibm', 'var') && isfield(ibm, 'case_name') ...
-        && strcmpi(ibm.case_name, 'baby_spider_shower')
-    u_boundary = ibm_baby_spider_boundary_velocity2d(coordX, coordY, ibm, 0);
-end
+    un1 = un; % Initialize next step velocity
+    vn1 = vn;
 
-laplacian_u_boundary_x = Dmatrixx * (Dmatrixx * u_boundary);
-laplacian_u_boundary_y = (u_boundary * DmatrixyT) * DmatrixyT;
-laplacian_u_boundary = laplacian_u_boundary_x + laplacian_u_boundary_y;
-fubc_contribution = -nu * laplacian_u_boundary(para_u.freeNodesx, para_u.freeNodesy);
+    % Move data and transform operators to GPU if requested
+    if strcmp(para_u.device, 'gpu')
+        fprintf('GPU computation: starting to load matrices/data\n');
+        Tx = gpuArray(Tx);
+        Ty = gpuArray(Ty);
+        invTx = gpuArray(invTx);
+        invTy = gpuArray(invTy);
+        Txn = gpuArray(Txn);
+        Tyn = gpuArray(Tyn);
+        invTxn = gpuArray(invTxn);
+        invTyn = gpuArray(invTyn);
+        Dmatrixx = gpuArray(Dmatrixx);
+        DmatrixyT = gpuArray(DmatrixyT);
+        helmholtz_u = gpuArray(helmholtz_u);
+        poisson_p = gpuArray(poisson_p);
+        fubc_contribution = gpuArray(fubc_contribution);
+        un = gpuArray(un);
+        vn = gpuArray(vn);
+        pre = gpuArray(pre);
+        un1 = gpuArray(un1);
+        vn1 = gpuArray(vn1);
+        u_boundary = gpuArray(u_boundary);
+        ibm.mask = gpuArray(ibm.mask);
+        ibm.target_u = gpuArray(ibm.target_u);
+        ibm.target_v = gpuArray(ibm.target_v);
+        wait(Device);
+    end
 
-un1 = un; % Initialize next step velocity
-vn1 = vn;
+    Omega0 = Dmatrixx * vn - un * DmatrixyT;
+    sem_write_ibm_vtk2d(vtk_dir, nx, ny, vtk_dump_id, 0, pointst, ...
+        un, vn, pre, Omega0, zeros(size(un)), zeros(size(vn)), ibm);
 
-% Move data and transform operators to GPU if requested
-if strcmp(para_u.device, 'gpu')
-    fprintf('GPU computation: starting to load matrices/data\n');
-    Tx = gpuArray(Tx);
-    Ty = gpuArray(Ty);
-    invTx = gpuArray(invTx);
-    invTy = gpuArray(invTy);
-    Txn = gpuArray(Txn);
-    Tyn = gpuArray(Tyn);
-    invTxn = gpuArray(invTxn);
-    invTyn = gpuArray(invTyn);
-    Dmatrixx = gpuArray(Dmatrixx);
-    DmatrixyT = gpuArray(DmatrixyT);
-    helmholtz_u = gpuArray(helmholtz_u);
-    poisson_p = gpuArray(poisson_p);
-    fubc_contribution = gpuArray(fubc_contribution);
-    un = gpuArray(un);
-    vn = gpuArray(vn);
-    pre = gpuArray(pre);
-    un1 = gpuArray(un1);
-    vn1 = gpuArray(vn1);
-    u_boundary = gpuArray(u_boundary);
-    ibm.mask = gpuArray(ibm.mask);
-    ibm.target_u = gpuArray(ibm.target_u);
-    ibm.target_v = gpuArray(ibm.target_v);
-    wait(Device);
-end
-
-if strcmp(para_u.device, 'gpu')
-    OUTPUT_Tecplot2D4(0, pathname, para_u.ny_all, para_u.nx_all, varName, ...
-        coordX(:), coordY(:), gather(un(:)), gather(vn(:)), gather(pre(:)));
-else
-    OUTPUT_Tecplot2D4(0, pathname, para_u.ny_all, para_u.nx_all, varName, ...
-        coordX(:), coordY(:), un(:), vn(:), pre(:));
-end
-Omega0 = Dmatrixx * vn - un * DmatrixyT;
-sem_write_ibm_vtk2d(vtk_dir, vtk_dump_id, 0, coordX, coordY, ...
-    un, vn, pre, Omega0, zeros(size(un)), zeros(size(vn)), ibm);
-
-Iter1 = 1;
+    Iter1 = 1;
 else
     % load flow
 
@@ -290,7 +285,7 @@ for Iter = Iter1:steps
 
     % Intermediate velocity RHS (explicit convection, implicit time term)
     U_star = un / dT - convection_u;
-    V_star = vn / dT - convection_v - 1;  % Add gravity term (downward acceleration)
+    V_star = vn / dT - convection_v ;  % Add gravity term (downward acceleration)
     % Note: Diffusion term is handled implicitly in the Helmholtz solve (Step 3)
 
     % Step 1.5: IBM forcing (direct forcing / Brinkman-style penalization)
@@ -312,7 +307,8 @@ for Iter = Iter1:steps
         U_star = U_star + ibm_force_u;
         V_star = V_star + ibm_force_v;
         if isfield(ibm, 'case_name') && strcmpi(ibm.case_name, 'baby_spider_shower')
-            [ext_force_u, ext_force_v] = ibm_external_force_spider_shower2d(un, vn, ibm, Iter * dT);
+            [ext_force_u, ext_force_v] = ...
+            ibm_external_force_spider_shower2d(un, vn, ibm, Iter * dT);
             U_star = U_star + ext_force_u;
             V_star = V_star + ext_force_v;
         end
@@ -380,9 +376,6 @@ for Iter = Iter1:steps
     uv_phys = squeeze(tensorprod(Tx, uv_phys, 2, 1));
     un1(para_u.freeNodesx, para_u.freeNodesy) = uv_phys; % Update INTERIOR u
 
-    % if strcmp(para_u.device, 'gpu')
-    %     wait(Device);
-    % end
 
     % Solve Helmholtz equation for v^(n+1) (INTERIOR nodes)
     uv_spec = pagemtimes(FV_interior, invTy'); % Use INTERIOR velocity matrices
@@ -392,10 +385,7 @@ for Iter = Iter1:steps
     uv_phys = squeeze(tensorprod(Tx, uv_phys, 2, 1));
     vn1(para_u.freeNodesx, para_u.freeNodesy) = uv_phys; % Update INTERIOR v
 
-    % if strcmp(para_u.device, 'gpu')
-    %     wait(Device);
-    % end
-
+ 
     % Re-enforce lid-driven cavity boundary conditions after the solve
     if ibm.enabled && isfield(ibm, 'case_name') ...
             && strcmpi(ibm.case_name, 'baby_spider_shower')
@@ -441,8 +431,8 @@ for Iter = Iter1:steps
 
     % Output data periodically (e.g., every 100 steps)
     if rem(Iter, 100) == 0
-    % if total_rms_error <= tol
-      if strcmp(para_u.device,'gpu')
+        % if total_rms_error <= tol
+        if strcmp(para_u.device,'gpu')
             un_out=gather(un1);
             vn_out=gather(vn1);
             pre_out=gather(pre);
@@ -477,15 +467,12 @@ for Iter = Iter1:steps
         else
             omega_out = Dmatrixx * vn1 - un1 * DmatrixyT;
         end
-        sem_write_ibm_vtk2d(vtk_dir, vtk_dump_id, time_val, coordX, coordY, ...
+        sem_write_ibm_vtk2d(vtk_dir, nx, ny, vtk_dump_id, time_val, pointst, ...
             un_out, vn_out, pre_out, omega_out, force_u_out, force_v_out, ibm);
 
- 
-        % Iter
-        % break
     end
 
- 
+
     % Update velocity for next iteration
     un = un1;
     vn = vn1;
@@ -497,3 +484,4 @@ time = toc;
 fprintf('Total computation time: %f seconds\n', time);
 
 fprintf('=== %d Program Ends ===\n', stage);
+sending_to_emil(Iter,steps,0)
