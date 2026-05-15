@@ -1,0 +1,20 @@
+function para = build_ns3d_parameters(cfg, bc)
+para.Np = cfg.Np;
+para.Npx = cfg.Np;
+para.Npy = cfg.Np;
+para.Npz = cfg.Np;
+para.Ncellx = cfg.Ncellx;
+para.Ncelly = cfg.Ncelly;
+para.Ncellz = cfg.Ncellz;
+para.minx = cfg.domain(1);
+para.maxx = cfg.domain(2);
+para.miny = cfg.domain(3);
+para.maxy = cfg.domain(4);
+para.minz = cfg.domain(5);
+para.maxz = cfg.domain(6);
+para.nx_all = para.Ncellx * para.Npx + 1;
+para.ny_all = para.Ncelly * para.Npy + 1;
+para.nz_all = para.Ncellz * para.Npz + 1;
+para.basis = 'SEM';
+para.bc = bc;
+end
